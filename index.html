@@ -274,6 +274,49 @@
     <canvas id="mCanvas" style="display:none"></canvas>
   </div>
 
+  <!-- Mobile composite view — hidden until tab selected -->
+  <div id="mPanelComposite" style="display:none;flex:1;min-height:0;flex-direction:column;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--bg-primary);border-bottom:0.5px solid var(--border-t)">
+      <button class="btn btn-sm btn-primary" id="mRefreshComp" style="width:auto"><i class="ti ti-refresh"></i> Refresh</button>
+      <button class="btn btn-sm" id="mExportImg" style="width:auto"><i class="ti ti-photo-down"></i> Save image</button>
+      <span class="pill blue" id="mCompShots" style="margin-left:auto">0 targets</span>
+    </div>
+    <div class="stats-grid" style="padding:6px">
+      <div class="stats-section">
+        <div class="stats-section-label">Composite POA offset</div>
+        <div class="stats-row">
+          <div class="stat-card"><div class="stat-label">Shots</div><div class="stat-value" id="mcN">—</div></div>
+          <div class="stat-card"><div class="stat-label">H offset</div><div class="stat-value" id="mcH">—<span class="stat-unit">in</span></div></div>
+          <div class="stat-card"><div class="stat-label">V offset</div><div class="stat-value" id="mcV">—<span class="stat-unit">in</span></div></div>
+        </div>
+      </div>
+      <div class="stats-section">
+        <div class="stats-section-label">Composite precision</div>
+        <div class="stats-row">
+          <div class="stat-card"><div class="stat-label">Mean radius</div><div class="stat-value" id="mcMR">—<span class="stat-unit">in</span></div></div>
+          <div class="stat-card"><div class="stat-label">R95</div><div class="stat-value" id="mcR95">—<span class="stat-unit">in</span></div></div>
+          <div class="stat-card"><div class="stat-label">Ext spread</div><div class="stat-value" id="mcES">—<span class="stat-unit">in</span></div></div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:1;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;background:var(--bg-primary)">
+      <div class="canvas-placeholder" id="mCompPlaceholder"><i class="ti ti-layers-intersect"></i><p>Save targets to see composite</p></div>
+      <canvas id="mCompCanvas" style="display:none;max-width:100%;max-height:100%"></canvas>
+    </div>
+  </div>
+
+  <!-- Mobile tab bar — Session / Composite -->
+  <div class="mobile-tab-bar">
+    <button class="mobile-tab active" id="mTabSession" aria-label="Session">
+      <i class="ti ti-photo"></i>
+      <span>Session</span>
+    </button>
+    <button class="mobile-tab" id="mTabComposite" aria-label="Composite">
+      <i class="ti ti-layers-intersect"></i>
+      <span>Composite</span>
+    </button>
+  </div>
+
   <!-- Compact always-visible stats strip -->
   <div class="stats-strip" id="mStatsStrip">
     <div class="stats-strip-item">
@@ -326,6 +369,32 @@
           <div class="stat-card"><div class="stat-label">Ext spread</div><div class="stat-value" id="msES">—<span class="stat-unit" id="msESu"></span></div></div>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Session modal — create / edit session -->
+<div class="modal-overlay" id="sessionModal">
+  <div class="modal-panel">
+    <div class="modal-title">
+      <span id="sessionModalTitle">New session</span>
+      <button class="btn btn-sm" id="sessionModalClose" style="width:auto;padding:2px 8px">✕</button>
+    </div>
+    <div class="field" style="margin-bottom:0">
+      <label>Session name</label>
+      <input type="text" id="modalSessName" placeholder="e.g. H4350 41.5gr"/>
+    </div>
+    <div class="field" style="margin-bottom:0">
+      <label>Distance (yards)</label>
+      <input type="number" id="modalSessDist" value="100" min="1"/>
+    </div>
+    <div class="field" style="margin-bottom:0">
+      <label>Notes / load details</label>
+      <input type="text" id="modalSessNotes" placeholder="e.g. 2490fps avg"/>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="sessionModalCancel">Cancel</button>
+      <button class="btn btn-primary" id="sessionModalSave">Save</button>
     </div>
   </div>
 </div>

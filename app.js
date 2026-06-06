@@ -17,7 +17,7 @@
 ════════════════════════════════════════════════════════ */
 
 /* ── Version — auto-bumped by GitHub Actions on every deploy ── */
-var APP_VERSION = '12';
+var APP_VERSION = '13';
 
 /* ── Canvas state ── */
 var calMode = false, calPoints = [], pxPerInch = null;
@@ -894,20 +894,63 @@ function loadTarget(sessIdx, tgtIdx) {
   img.src = tgt.imgSrc;
 }
 
+/* ── Session modal ── */
+var _sessionModalMode = 'new'; /* 'new' | 'edit' */
+var _sessionModalEditIdx = -1;
+
+function openSessionModal(mode, idx) {
+  _sessionModalMode = mode || 'new';
+  _sessionModalEditIdx = idx != null ? idx : -1;
+  var title = document.getElementById('sessionModalTitle');
+  var nameEl = document.getElementById('modalSessName');
+  var distEl = document.getElementById('modalSessDist');
+  var notesEl = document.getElementById('modalSessNotes');
+  var saveBtn = document.getElementById('sessionModalSave');
+  if (_sessionModalMode === 'edit' && sessions[_sessionModalEditIdx]) {
+    var s = sessions[_sessionModalEditIdx];
+    if (title) title.textContent = 'Edit session';
+    if (nameEl) nameEl.value = s.name;
+    if (distEl) distEl.value = s.dist;
+    if (notesEl) notesEl.value = s.notes || '';
+    if (saveBtn) saveBtn.textContent = 'Update';
+  } else {
+    if (title) title.textContent = 'New session';
+    if (nameEl) nameEl.value = '';
+    if (distEl) distEl.value = '100';
+    if (notesEl) notesEl.value = '';
+    if (saveBtn) saveBtn.textContent = 'Create session';
+  }
+  document.getElementById('sessionModal').classList.add('open');
+  if (nameEl) setTimeout(function() { nameEl.focus(); }, 100);
+}
+
+function closeSessionModal() {
+  document.getElementById('sessionModal').classList.remove('open');
+}
+
+function commitSessionModal() {
+  var name  = (document.getElementById('modalSessName').value  || '').trim();
+  var dist  = parseFloat(document.getElementById('modalSessDist').value)  || 100;
+  var notes = (document.getElementById('modalSessNotes').value || '').trim();
+  if (!name) { document.getElementById('modalSessName').focus(); return; }
+  closeSessionModal();
+  if (_sessionModalMode === 'edit' && _sessionModalEditIdx >= 0) {
+    var s = sessions[_sessionModalEditIdx];
+    s.name = name; s.dist = dist; s.notes = notes;
+    dbSave(); renderSidebars(); toast('Session updated');
+  } else {
+    var sess = newSession(name, dist, notes);
+    sessions.push(sess);
+    activeSessionIdx = sessions.length - 1;
+    activeTargetIdx = -1;
+    clearCanvas();
+    dbSave(); renderSidebars(); updateBanner(); updateStepBar();
+    toast('Session "' + sess.name + '" created — load a target image to begin');
+  }
+}
+
 function createNewSession() {
-  var name = prompt('Session name (e.g. H4350 41.5gr):', 'New session');
-  if (name === null) return;
-  var dist = prompt('Distance (yards):', '100');
-  if (dist === null) return;
-  var notes = prompt('Notes / load details (optional):', '');
-  if (notes === null) notes = '';
-  var sess = newSession(name.trim() || 'New session', parseFloat(dist) || 100, notes.trim());
-  sessions.push(sess);
-  activeSessionIdx = sessions.length - 1;
-  activeTargetIdx = -1;
-  clearCanvas();
-  dbSave(); renderSidebars(); updateBanner(); updateStepBar();
-  toast('Session "' + sess.name + '" created — load a target image to begin');
+  openSessionModal('new');
 }
 
 function openSession(i) {
@@ -919,14 +962,7 @@ function openSession(i) {
 }
 
 function editSession(i) {
-  var sess = sessions[i];
-  var name = prompt('Session name:', sess.name); if (name === null) return;
-  var dist = prompt('Distance (yards):', sess.dist); if (dist === null) return;
-  var notes = prompt('Notes / load details:', sess.notes || ''); if (notes === null) return;
-  sess.name = name.trim() || sess.name;
-  sess.dist = parseFloat(dist) || sess.dist;
-  sess.notes = notes.trim();
-  dbSave(); renderSidebars(); toast('Session updated');
+  openSessionModal('edit', i);
 }
 
 function deleteSession(i) {
@@ -1059,6 +1095,87 @@ function loadBackupFile(file) {
   };
   r.readAsText(file);
 }
+/* Mobile composite render — uses mCompCanvas */
+function renderMobileComposite() {
+  var mCompCv = document.getElementById('mCompCanvas');
+  if (!mCompCv) return;
+  var mCompCx = mCompCv.getContext('2d');
+  var targets = [];
+  if (activeSessionIdx >= 0) {
+    targets = sessions[activeSessionIdx].targets;
+    var ss = document.getElementById('mCompShots');
+    if (ss) ss.textContent = 'Session: ' + sessions[activeSessionIdx].name;
+  } else {
+    sessions.forEach(function(s) { s.targets.forEach(function(t) { targets.push(t); }); });
+    var ss2 = document.getElementById('mCompShots');
+    if (ss2) ss2.textContent = 'All sessions';
+  }
+  targets = targets.filter(function(t) { return t.shots.length > 0 && t.poa; });
+  var ph = document.getElementById('mCompPlaceholder');
+  if (targets.length === 0) {
+    if (ph) ph.style.display = ''; mCompCv.style.display = 'none';
+    ['mcN','mcH','mcV','mcMR','mcR95','mcES'].forEach(function(id){var e=document.getElementById(id);if(e&&e.childNodes[0])e.childNodes[0].nodeValue='—';}); return;
+  }
+  if (ph) ph.style.display = 'none'; mCompCv.style.display = 'block';
+  /* Size canvas to its container */
+  var wrap = mCompCv.parentElement;
+  mCompCv.width  = wrap ? wrap.clientWidth  : 360;
+  mCompCv.height = wrap ? wrap.clientHeight : 360;
+  var SIZE = Math.min(mCompCv.width, mCompCv.height);
+  /* Reuse the desktop composite drawing logic */
+  var allOff = [], maxAbs = 0;
+  targets.forEach(function(t) {
+    var ppi = t.pxPerInch || (t.imgW / 36);
+    t.shots.forEach(function(sh) {
+      var x=(sh.nx-t.poa.nx)/ppi, y=-(sh.ny-t.poa.ny)/ppi;
+      maxAbs=Math.max(maxAbs,Math.abs(x),Math.abs(y)); allOff.push({x:x,y:y,ti:targets.indexOf(t)});
+    });
+  });
+  if (maxAbs===0) maxAbs=1;
+  var ox=(mCompCv.width-SIZE)/2, oy=(mCompCv.height-SIZE)/2;
+  mCompCx.fillStyle='#f9f9f7'; mCompCx.fillRect(0,0,mCompCv.width,mCompCv.height);
+  mCompCx.save(); mCompCx.translate(ox,oy);
+  mCompCx.strokeStyle='#e0e0da'; mCompCx.lineWidth=0.5;
+  [40,80,120,160,200].forEach(function(r){mCompCx.beginPath();mCompCx.arc(SIZE/2,SIZE/2,r,0,Math.PI*2);mCompCx.stroke();});
+  mCompCx.strokeStyle='#d0d0c8';
+  mCompCx.beginPath();mCompCx.moveTo(SIZE/2,10);mCompCx.lineTo(SIZE/2,SIZE-10);mCompCx.stroke();
+  mCompCx.beginPath();mCompCx.moveTo(10,SIZE/2);mCompCx.lineTo(SIZE-10,SIZE/2);mCompCx.stroke();
+  var scale=(SIZE/2-32)/maxAbs;
+  var colors=['#3b82f6','#ef4444','#22c55e','#f59e0b','#8b5cf6','#ec4899','#06b6d4','#84cc16'];
+  var counters={};
+  allOff.forEach(function(o){
+    counters[o.ti]=(counters[o.ti]||0)+1;
+    var px=SIZE/2+o.x*scale, py=SIZE/2-o.y*scale, col=colors[o.ti%colors.length];
+    mCompCx.save();mCompCx.fillStyle=col;mCompCx.globalAlpha=0.75;
+    mCompCx.beginPath();mCompCx.arc(px,py,7,0,Math.PI*2);mCompCx.fill();
+    mCompCx.globalAlpha=1;mCompCx.strokeStyle='#fff';mCompCx.lineWidth=1.5;
+    mCompCx.beginPath();mCompCx.arc(px,py,7,0,Math.PI*2);mCompCx.stroke();
+    mCompCx.fillStyle='#fff';mCompCx.font='bold 9px sans-serif';mCompCx.textAlign='center';mCompCx.textBaseline='middle';
+    mCompCx.fillText(counters[o.ti],px,py);mCompCx.restore();
+  });
+  var cX=allOff.reduce(function(a,o){return a+o.x;},0)/allOff.length;
+  var cY=allOff.reduce(function(a,o){return a+o.y;},0)/allOff.length;
+  var fromC=allOff.map(function(o){return Math.sqrt(Math.pow(o.x-cX,2)+Math.pow(o.y-cY,2));});
+  var mr=fromC.reduce(function(a,r){return a+r;},0)/fromC.length;
+  var r95=mr*2.1, r95px=r95*scale;
+  var cpx=SIZE/2+cX*scale, cpy=SIZE/2-cY*scale;
+  drawR95(mCompCx,cpx,cpy,r95px,r95);
+  mCompCx.save();mCompCx.strokeStyle='#f97316';mCompCx.fillStyle='rgba(249,115,22,0.2)';mCompCx.lineWidth=1.5;
+  mCompCx.beginPath();mCompCx.arc(cpx,cpy,5,0,Math.PI*2);mCompCx.fill();mCompCx.stroke();
+  mCompCx.strokeStyle='#f97316';mCompCx.lineWidth=1;
+  mCompCx.beginPath();mCompCx.moveTo(cpx-8,cpy);mCompCx.lineTo(cpx+8,cpy);mCompCx.stroke();
+  mCompCx.beginPath();mCompCx.moveTo(cpx,cpy-8);mCompCx.lineTo(cpx,cpy+8);mCompCx.stroke();mCompCx.restore();
+  drawPOA(mCompCx,SIZE/2,SIZE/2,false);
+  mCompCx.fillStyle='#666';mCompCx.font='10px sans-serif';mCompCx.textAlign='center';
+  mCompCx.fillText('+'+maxAbs.toFixed(2)+'"',SIZE-26,SIZE/2-5);
+  mCompCx.fillText('−'+maxAbs.toFixed(2)+'"',26,SIZE/2-5);
+  mCompCx.restore();
+  function sv(id,v){var e=document.getElementById(id);if(e&&e.childNodes[0])e.childNodes[0].nodeValue=v;}
+  sv('mcN',allOff.length); sv('mcH',fmt(cX)); sv('mcV',fmt(cY)); sv('mcMR',fmt(mr)); sv('mcR95',fmt(r95));
+  var es=0; for(var i=0;i<allOff.length;i++) for(var j=i+1;j<allOff.length;j++){var d=Math.sqrt(Math.pow(allOff[i].x-allOff[j].x,2)+Math.pow(allOff[i].y-allOff[j].y,2));if(d>es)es=d;}
+  sv('mcES',fmt(es));
+}
+
 function exportSpreadsheet() {
   var rows = [];
   sessions.forEach(function(sess, si) {
@@ -1246,6 +1363,35 @@ function setShowLabels(v) {
 function openMobileDrawer() { renderSidebars(); document.getElementById('mDrawer').classList.add('open'); }
 function closeMobileDrawer() { document.getElementById('mDrawer').classList.remove('open'); }
 
+/* Mobile tab switching — Session / Composite */
+var mobileTab = 'session';
+function switchMobileTab(t) {
+  mobileTab = t;
+  var sessPanel  = document.getElementById('mCanvasWrap');
+  var compPanel  = document.getElementById('mPanelComposite');
+  var stripEl    = document.getElementById('mStatsStrip');
+  var statsPanel = document.getElementById('mStatsPanel');
+  var tabSess    = document.getElementById('mTabSession');
+  var tabComp    = document.getElementById('mTabComposite');
+  /* action bar and step bar stay visible in both modes */
+  if (t === 'session') {
+    if (sessPanel)  sessPanel.style.display  = 'flex';
+    if (compPanel)  compPanel.style.display  = 'none';
+    if (stripEl)    stripEl.style.display    = 'flex';
+    if (statsPanel && statsPanel.classList.contains('open')) statsPanel.style.display = 'block';
+    if (tabSess)    tabSess.classList.add('active');
+    if (tabComp)    tabComp.classList.remove('active');
+  } else {
+    if (sessPanel)  sessPanel.style.display  = 'none';
+    if (compPanel)  compPanel.style.display  = 'flex';
+    if (stripEl)    stripEl.style.display    = 'none';
+    if (statsPanel) statsPanel.style.display = 'none';
+    if (tabSess)    tabSess.classList.remove('active');
+    if (tabComp)    tabComp.classList.add('active');
+    renderMobileComposite();
+  }
+}
+
 /* ── Tabs ── */
 function switchTab(t) {
   document.getElementById('dTabSession').classList.toggle('active', t === 'session');
@@ -1299,6 +1445,29 @@ wire('mStatsToggle', 'click', function() {
 });
 wire('installBanner',  'click', triggerInstall);
 wire('installDismiss', 'click', function(e) { e.stopPropagation(); document.getElementById('installBanner').classList.remove('show'); });
+
+/* Session modal */
+wire('sessionModalClose',  'click', closeSessionModal);
+wire('sessionModalCancel', 'click', closeSessionModal);
+wire('sessionModalSave',   'click', commitSessionModal);
+wire('sessionModal', 'click', function(e) { if (e.target === this) closeSessionModal(); });
+/* Allow Enter key to submit modal */
+['modalSessName','modalSessDist','modalSessNotes'].forEach(function(id) {
+  wire(id, 'keydown', function(e) { if (e.key === 'Enter') commitSessionModal(); });
+});
+
+/* Mobile tabs */
+wire('mTabSession',   'click', function() { switchMobileTab('session'); });
+wire('mTabComposite', 'click', function() { switchMobileTab('composite'); });
+wire('mRefreshComp',  'click', renderMobileComposite);
+wire('mExportImg',    'click', function() {
+  var cv = document.getElementById('mCompCanvas');
+  if (!cv || cv.style.display === 'none') { renderMobileComposite(); }
+  if (!cv || cv.style.display === 'none') { toast('No composite data'); return; }
+  var a = document.createElement('a'); a.href = cv.toDataURL('image/png');
+  a.download = 'shot-tracker-composite-' + new Date().toISOString().slice(0,10) + '.png'; a.click();
+  toast('Composite image saved');
+});
 
 window.addEventListener('resize', function() {
   if (currentImg) {
