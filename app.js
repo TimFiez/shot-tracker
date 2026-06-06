@@ -907,10 +907,9 @@ function buildSidebarHTML() {
 }
 
 function saveLabel() {
-  if (saveState === 'dirty')  return 'Save target ●';
   if (saveState === 'saving') return 'Saved ✓';
   if (saveState === 'clean')  return 'Saved ✓';
-  return 'Save target';
+  return 'Save target'; /* dirty or none */
 }
 
 function renderSidebars() {
