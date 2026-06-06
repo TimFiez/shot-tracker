@@ -449,3 +449,85 @@ body.show-labels .btn-action .btn-label {
   background: var(--border-t);
   flex-shrink: 0;
 }
+
+/* ════════════════════════════════════════
+   MOBILE VIEWPORT — no scroll, canvas fills space
+════════════════════════════════════════ */
+@media (max-width: 640px) {
+  body { overflow: hidden; height: 100dvh; }
+  .app-mobile {
+    height: 100dvh;
+    overflow: hidden;  /* nothing scrolls — canvas fills remaining space */
+  }
+  /* canvas-wrap with min-height:0 lets flex shrink it properly */
+  .canvas-wrap { min-height: 0; }
+}
+
+/* ════════════════════════════════════════
+   COMPACT STATS STRIP
+   Always visible at bottom of canvas.
+   Shows the 5 most important numbers.
+════════════════════════════════════════ */
+.stats-strip {
+  display: flex;
+  align-items: center;
+  background: var(--bg-primary);
+  border-top: 0.5px solid var(--border-t);
+  padding: 0 8px;
+  height: 38px;
+  flex-shrink: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.stats-strip-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  gap: 1px;
+}
+.stats-strip-label {
+  font-size: 9px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.stats-strip-value {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.stats-strip-sep {
+  width: 0.5px;
+  height: 22px;
+  background: var(--border-t);
+  flex-shrink: 0;
+}
+.stats-strip-tap {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  color: var(--text-secondary);
+}
+.stats-strip-tap:active { opacity: 0.6; }
+.stats-strip-tap i {
+  font-size: 14px;
+  color: var(--text-secondary);
+  transition: transform 0.2s;
+}
+.stats-strip-tap.open i { transform: rotate(180deg); }
+
+/* Full stats expand — slides up from bottom */
+.stats-collapsible {
+  display: none;
+  background: var(--bg-secondary);
+  border-top: 0.5px solid var(--border-t);
+}
+.stats-collapsible.open { display: block; }
+
+/* View mode — canvas taps do nothing, cursor shows it */
+.canvas-wrap.view-mode canvas { cursor: default !important; }

@@ -16,6 +16,9 @@
      the cal branch until AFTER calMode=false is set.
 ════════════════════════════════════════════════════════ */
 
+/* ── Version — auto-bumped by GitHub Actions on every deploy ── */
+var APP_VERSION = '12';
+
 /* ── Canvas state ── */
 var calMode = false, calPoints = [], pxPerInch = null;
 var mode = 'poa';
@@ -287,11 +290,13 @@ function hitTest(nx, ny, cv) {
      null | {type: 'cal'|'poa'|'shot', idx: N}
 ════════════════════════════════════════ */
 var touchPlacing = null;  /* active touch placement state */
-var TOUCH_OFFSET_Y = 80;  /* px above finger in canvas display coords */
+var TOUCH_OFFSET_Y = 44;  /* px above finger in canvas display coords — close enough to see precisely */
 
-/* Draw a precision crosshair above the finger during touch drag */
-function drawTouchCrosshair(cv, cx, displayX, displayY) {
-  var x = displayX, y = displayY - TOUCH_OFFSET_Y;
+/* Draw a precision crosshair above/below the finger during touch drag.
+   offset > 0 = above finger, offset < 0 = below finger */
+function drawTouchCrosshair(cv, cx, displayX, displayY, offset) {
+  if (offset == null) offset = TOUCH_OFFSET_Y;
+  var x = displayX, y = displayY - offset;
   cx.save();
   /* Outer ring */
   cx.strokeStyle = 'rgba(255,255,255,0.9)'; cx.lineWidth = 3;
@@ -307,9 +312,10 @@ function drawTouchCrosshair(cv, cx, displayX, displayY) {
   /* Centre dot */
   cx.fillStyle = 'rgba(30,30,30,0.9)';
   cx.beginPath(); cx.arc(x, y, 2, 0, Math.PI * 2); cx.fill();
-  /* Stem line from crosshair down to finger touch point */
+  /* Stem line from crosshair toward finger touch point */
+  var stemStartY = offset >= 0 ? y + 20 : y - 20; /* start below xhair if above finger, above if below */
   cx.strokeStyle = 'rgba(255,255,255,0.7)'; cx.lineWidth = 2; cx.setLineDash([4, 3]);
-  cx.beginPath(); cx.moveTo(x, y + 20); cx.lineTo(displayX, displayY); cx.stroke();
+  cx.beginPath(); cx.moveTo(x, stemStartY); cx.lineTo(displayX, displayY); cx.stroke();
   cx.setLineDash([]);
   cx.restore();
 }
@@ -325,7 +331,7 @@ function renderBothMaybeXhair() {
 function renderOnMaybeXhair(cv, cx) {
   renderOn(cv, cx);
   if (_touchCrosshairState && _touchCrosshairState.cv === cv) {
-    drawTouchCrosshair(cv, cx, _touchCrosshairState.displayX, _touchCrosshairState.displayY);
+    drawTouchCrosshair(cv, cx, _touchCrosshairState.displayX, _touchCrosshairState.displayY, _touchCrosshairState.offset);
   }
 }
 
@@ -348,14 +354,31 @@ function getTouchPt(cv, clientX, clientY) {
   var sc = getScale(cv);
   var displayX = (clientX - r.left) * (cv.width  / r.width);
   var displayY = (clientY - r.top)  * (cv.height / r.height);
-  /* The actual marker position is offset upward by TOUCH_OFFSET_Y display px */
+
+  /* Edge-aware offset: reduce offset near bottom so marker stays on canvas.
+     If within TOUCH_OFFSET_Y of the bottom edge, shrink the offset so the
+     marker sits at least 10px from the top edge.
+     If near the top, flip the crosshair below the finger instead. */
+  var bottomMargin = cv.height - displayY;
+  var offset;
+  if (displayY < TOUCH_OFFSET_Y) {
+    /* Near top — place marker below finger instead */
+    offset = -Math.min(TOUCH_OFFSET_Y, cv.height - displayY - 10);
+  } else if (bottomMargin < TOUCH_OFFSET_Y + 10) {
+    /* Near bottom — shrink offset so marker doesn't go off canvas */
+    offset = Math.max(10, bottomMargin - 10);
+  } else {
+    offset = TOUCH_OFFSET_Y;
+  }
+
   var markerDisplayX = displayX;
-  var markerDisplayY = Math.max(0, displayY - TOUCH_OFFSET_Y);
+  var markerDisplayY = displayY - offset;
   return {
     nx: markerDisplayX / sc,
     ny: markerDisplayY / sc,
     displayX: displayX,
-    displayY: displayY
+    displayY: displayY,
+    offset: offset   /* pass through so crosshair draws at correct position */
   };
 }
 
@@ -391,6 +414,8 @@ function handleMouseDown(cv, clientX, clientY) {
     updateShotPill(); renderBoth(); updateStats(); updateStepBar(); updateBanner();
     markDirty(); return;
   }
+  /* VIEW — canvas taps do nothing */
+  if (mode === 'view') return;
 }
 
 function handleMouseMove(cv, clientX, clientY) {
@@ -410,7 +435,7 @@ function handleMouseUp() {
 function handleTouchStart(cv, t) {
   if (!currentImg) return;
   var pt = getTouchPt(cv, t.clientX, t.clientY);
-  _touchCrosshairState = { cv: cv, displayX: pt.displayX, displayY: pt.displayY };
+  _touchCrosshairState = { cv: cv, displayX: pt.displayX, displayY: pt.displayY, offset: pt.offset };
 
   /* CALIBRATION */
   if (calMode) {
@@ -453,12 +478,15 @@ function handleTouchStart(cv, t) {
     touchPlacing = { type: 'shot', idx: shots.length - 1 };
     updateShotPill(); renderBothMaybeXhair(); updateStats(); return;
   }
+
+  /* VIEW — canvas taps do nothing */
+  if (mode === 'view') { _touchCrosshairState = null; return; }
 }
 
 function handleTouchMove(cv, t) {
   if (!currentImg || !touchPlacing) return;
   var pt = getTouchPt(cv, t.clientX, t.clientY);
-  _touchCrosshairState = { cv: cv, displayX: pt.displayX, displayY: pt.displayY };
+  _touchCrosshairState = { cv: cv, displayX: pt.displayX, displayY: pt.displayY, offset: pt.offset };
 
   if (touchPlacing.type === 'cal') {
     calPoints[touchPlacing.idx] = { nx: pt.nx, ny: pt.ny };
@@ -621,12 +649,17 @@ function getTargetLabel() {
 function setMode(m) {
   mode = m;
   if (m !== 'edit') { selectedTarget = null; dragTarget = null; showDelSel(false); renderBoth(); }
-  /* Use mode-active class for clear active state */
+  /* view mode = canvas is passive, no mode button highlighted */
   ['d','m'].forEach(function(p) {
     ['POA','Shot','Edit'].forEach(function(name) {
       var el = document.getElementById(p + 'Mode' + name); if (!el) return;
       el.classList.toggle('mode-active', m === name.toLowerCase());
     });
+  });
+  /* Show/hide view-mode cursor on canvas wraps */
+  ['dCanvasWrap','mCanvasWrap'].forEach(function(id) {
+    var el = document.getElementById(id); if (!el) return;
+    el.classList.toggle('view-mode', m === 'view');
   });
   updateBanner(); updateStepBar();
 }
@@ -683,6 +716,8 @@ function updateBanner() {
     cls = 'banner-info'; msg = '<i class="ti ti-circle-dot"></i> Click each bullet hole — orange = centroid, red dashed = R95';
   } else if (mode === 'edit') {
     cls = 'banner-neutral'; msg = '<i class="ti ti-arrows-move"></i> Click a marker to select, drag to reposition';
+  } else if (mode === 'view' && poa && shots.length > 0) {
+    cls = 'banner-success'; msg = '<i class="ti ti-check"></i> Target saved — tap a mode button to make changes, or load another image';
   } else if (poa && shots.length > 0 && saveState === 'dirty') {
     cls = 'banner-warn'; msg = '<i class="ti ti-device-floppy"></i> Unsaved changes — hit Save target when ready';
   } else if (poa && shots.length > 0) {
@@ -716,7 +751,13 @@ function updateStats() {
   var u = pxPerInch ? 'in' : '~in';
   function sv(id, v) { var e = document.getElementById(id); if (e && e.childNodes[0]) e.childNodes[0].nodeValue = v; }
   function su(id, v) { var e = document.getElementById(id); if (e) e.textContent = v; }
-  if (!st) { ['dsN','dsH','dsV','dsMR','dsR95','dsES','msN','msH','msV','msMR','msR95','msES'].forEach(function(id) { sv(id, '—'); }); return; }
+  function st2(id, v) { var e = document.getElementById(id); if (e) e.textContent = v; }
+  if (!st) {
+    ['dsN','dsH','dsV','dsMR','dsR95','dsES','msN','msH','msV','msMR','msR95','msES'].forEach(function(id) { sv(id, '—'); });
+    /* Clear strip */
+    ['msStripN','msStripH','msStripV','msStripMR','msStripR95'].forEach(function(id) { st2(id, '—'); });
+    return;
+  }
   ['d','m'].forEach(function(p) {
     sv(p + 'sN', st.n); sv(p + 'sH', fmt(st.centroidX)); su(p + 'sHu', u);
     sv(p + 'sV', fmt(st.centroidY)); su(p + 'sVu', u);
@@ -724,6 +765,12 @@ function updateStats() {
     sv(p + 'sR95', fmt(st.r95)); su(p + 'sR95u', u);
     sv(p + 'sES', fmt(st.es)); su(p + 'sESu', u);
   });
+  /* Update compact strip */
+  st2('msStripN',   String(st.n));
+  st2('msStripH',   fmt(st.centroidX, 2) + (u));
+  st2('msStripV',   fmt(st.centroidY, 2) + (u));
+  st2('msStripMR',  fmt(st.meanR, 2) + (u));
+  st2('msStripR95', fmt(st.r95, 2) + (u));
 }
 
 /* ── Image load ── */
@@ -814,7 +861,9 @@ function saveCurrentTarget() {
   updateTargetLabelInput(label);
 
   sess.updatedAt = new Date().toISOString();
-  dbSave(); markClean(); renderSidebars(); updateBanner();
+  dbSave(); markClean(); renderSidebars();
+  setMode('view'); /* switch to view mode — prevents accidental new placements */
+  updateBanner();
 }
 
 function loadTarget(sessIdx, tgtIdx) {
@@ -1178,6 +1227,9 @@ function renderSettings() {
   var slOff = document.getElementById('showLabelsOff');
   if (slOn)  slOn.classList.toggle('active',  settings.showLabels);
   if (slOff) slOff.classList.toggle('active', !settings.showLabels);
+  /* Version display */
+  var vEl = document.getElementById('appVersionDisplay');
+  if (vEl) vEl.textContent = 'Shot Tracker v' + APP_VERSION;
 }
 function setStorageMode(m) { settings.storageMode = m; saveSettings(); renderSettings(); toast(m === 'files' ? 'Backup-to-file mode enabled' : 'Local storage mode enabled'); }
 
@@ -1239,7 +1291,12 @@ wire('storageModFiles',  'click', function() { setStorageMode('files'); });
 wire('showLabelsOn',  'click', function() { setShowLabels(true); });
 wire('showLabelsOff', 'click', function() { setShowLabels(false); });
 wire('calDefaultInput',  'change', function() { var v = parseFloat(this.value) || 1; settings.calDefault = v; saveSettings(); toast('Default cal distance set to ' + v + '"'); });
-wire('mStatsToggle', 'click', function() { this.classList.toggle('open'); document.getElementById('mStatsPanel').classList.toggle('open'); });
+wire('mStatsToggle', 'click', function() {
+  this.classList.toggle('open');
+  document.getElementById('mStatsPanel').classList.toggle('open');
+  var chev = document.getElementById('mStatsChevron');
+  if (chev) chev.style.transform = this.classList.contains('open') ? 'rotate(180deg)' : '';
+});
 wire('installBanner',  'click', triggerInstall);
 wire('installDismiss', 'click', function(e) { e.stopPropagation(); document.getElementById('installBanner').classList.remove('show'); });
 

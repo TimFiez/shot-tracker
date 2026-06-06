@@ -99,7 +99,10 @@
 
     <!-- About -->
     <div style="margin-top:16px;padding-top:12px;border-top:0.5px solid var(--border-t)">
-      <div class="sec-label" style="margin-bottom:8px">About</div>
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+        <div class="sec-label" style="margin-bottom:0">About</div>
+        <div id="appVersionDisplay" style="font-size:11px;color:var(--text-tertiary);font-weight:500"></div>
+      </div>
       <div style="font-size:12px;color:var(--text-secondary);line-height:1.6">
         Shot Tracker analyzes target groups using the PRB centroid method.<br>
         R95 = Mean Radius × 2.1, per <a href="https://precisionrifleblog.com/2020/12/12/measuring-group-size-statistics-for-shooters/" target="_blank" rel="noopener" style="color:var(--text-info)">PrecisionRifleBlog</a>.<br><br>
@@ -262,7 +265,8 @@
     <button class="btn-action" id="mDelSel" style="display:none;color:var(--text-danger);border-color:var(--border-danger)" aria-label="Delete selected"><i class="ti ti-trash"></i><span class="btn-label">Delete</span></button>
   </div>
 
-  <div class="canvas-wrap" id="mCanvasWrap" style="flex:1">
+  <!-- Canvas fills all remaining vertical space -->
+  <div class="canvas-wrap" id="mCanvasWrap" style="flex:1;min-height:0">
     <div class="canvas-placeholder" id="mPlaceholder">
       <i class="ti ti-photo"></i>
       <p>Tap the menu <i class="ti ti-menu-2" style="font-size:14px"></i> to create a session and load a target image</p>
@@ -270,10 +274,40 @@
     <canvas id="mCanvas" style="display:none"></canvas>
   </div>
 
-  <div class="stats-toggle" id="mStatsToggle">
-    <span>Stats</span>
-    <i class="ti ti-chevron-down"></i>
+  <!-- Compact always-visible stats strip -->
+  <div class="stats-strip" id="mStatsStrip">
+    <div class="stats-strip-item">
+      <span class="stats-strip-label">Shots</span>
+      <span class="stats-strip-value" id="msStripN">—</span>
+    </div>
+    <div class="stats-strip-sep"></div>
+    <div class="stats-strip-item">
+      <span class="stats-strip-label">H offset</span>
+      <span class="stats-strip-value" id="msStripH">—</span>
+    </div>
+    <div class="stats-strip-sep"></div>
+    <div class="stats-strip-item">
+      <span class="stats-strip-label">V offset</span>
+      <span class="stats-strip-value" id="msStripV">—</span>
+    </div>
+    <div class="stats-strip-sep"></div>
+    <div class="stats-strip-item">
+      <span class="stats-strip-label">MR</span>
+      <span class="stats-strip-value" id="msStripMR">—</span>
+    </div>
+    <div class="stats-strip-sep"></div>
+    <div class="stats-strip-item">
+      <span class="stats-strip-label">R95</span>
+      <span class="stats-strip-value" id="msStripR95">—</span>
+    </div>
+    <div class="stats-strip-sep"></div>
+    <div class="stats-strip-item stats-strip-tap" id="mStatsToggle" aria-label="Show full stats">
+      <span class="stats-strip-label">More</span>
+      <i class="ti ti-chevron-up" id="mStatsChevron"></i>
+    </div>
   </div>
+
+  <!-- Full stats panel — expands above the strip -->
   <div class="stats-collapsible" id="mStatsPanel">
     <div class="stats-grid" style="padding:8px">
       <div class="stats-section">
