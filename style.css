@@ -343,13 +343,6 @@ canvas { display: block; max-width: 100%; max-height: 100%; touch-action: none; 
   50%       { opacity: 0.65; }
 }
 
-/* No target loaded — neutral, low emphasis */
-.btn-save-none {
-  border-color: var(--border-s);
-  background: var(--bg-secondary);
-  color: var(--text-tertiary);
-}
-
 /* Unsaved changes — amber, demands attention */
 .btn-save-dirty {
   border-color: var(--border-warning);

@@ -30,8 +30,8 @@ var activeSessionIdx = -1;
 var activeTargetIdx  = -1;
 
 /* ── Save button state ── */
-/* 'none' = no target loaded, 'dirty' = unsaved, 'clean' = saved */
-var saveState = 'none';
+/* 'clean' = nothing to save (initial/loaded/saved), 'dirty' = unsaved changes */
+var saveState = 'clean';
 var _saveFlashTimer = null;
 
 /* ── Canvas elements ── */
@@ -122,19 +122,26 @@ function markDirty() {
   saveState = 'dirty';
   applySaveButtonStyle();
 }
-function markClean() {
-  saveState = 'saving'; /* flash green solid */
-  applySaveButtonStyle();
-  if (_saveFlashTimer) clearTimeout(_saveFlashTimer);
-  _saveFlashTimer = setTimeout(function() {
+function markClean(flash) {
+  if (_saveFlashTimer) { clearTimeout(_saveFlashTimer); _saveFlashTimer = null; }
+  if (flash !== false) {
+    /* After a user-initiated save: flash solid green then settle */
+    saveState = 'saving';
+    applySaveButtonStyle();
+    _saveFlashTimer = setTimeout(function() {
+      saveState = 'clean';
+      applySaveButtonStyle();
+      _saveFlashTimer = null;
+    }, 2000);
+  } else {
+    /* Quiet clean — loading a saved target, no flash needed */
     saveState = 'clean';
     applySaveButtonStyle();
-    _saveFlashTimer = null;
-  }, 2000);
+  }
 }
 function markNone() {
   if (_saveFlashTimer) { clearTimeout(_saveFlashTimer); _saveFlashTimer = null; }
-  saveState = 'none';
+  saveState = 'clean'; /* treat same as clean — greyed Saved checkmark */
   applySaveButtonStyle();
 }
 
@@ -156,8 +163,7 @@ function updateSidebarSaveBtn() {
 function saveBtnClass() {
   if (saveState === 'dirty')  return 'btn-save-dirty';
   if (saveState === 'saving') return 'btn-save-saving';
-  if (saveState === 'clean')  return 'btn-save-clean';
-  return 'btn-save-none'; /* no target loaded */
+  return 'btn-save-clean'; /* clean or none — same quiet green style */
 }
 
 /* Step bar save step gets its own color treatment based on saveState */
@@ -610,7 +616,7 @@ function loadTarget(sessIdx, tgtIdx) {
     sizeCanvas(mCv, document.getElementById('mCanvasWrap'));
     /* FIX: label input always reflects the active target's saved label */
     updateTargetLabelInput(tgt.label);
-    markClean(); /* loaded from saved state — clean */
+    markClean(false); /* loaded from saved state — no flash */
     renderBoth(); updateStats(); updateStepBar(); updateBanner(); setMode('shot');
     renderSidebars(); closeMobileDrawer();
   };
@@ -907,9 +913,10 @@ function buildSidebarHTML() {
 }
 
 function saveLabel() {
+  if (saveState === 'dirty')  return 'Save target'; /* explicit — must be "Save target" when dirty */
   if (saveState === 'saving') return 'Saved ✓';
   if (saveState === 'clean')  return 'Saved ✓';
-  return 'Save target'; /* dirty or none */
+  return 'Saved ✓'; /* default clean/none state */
 }
 
 function renderSidebars() {
