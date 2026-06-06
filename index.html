@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<meta name="description" content="Photograph targets, calibrate scale, mark impacts, analyze group statistics with R95 and mean radius."/>
+<meta name="theme-color" content="#1a1a18"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Shot Tracker"/>
+<link rel="manifest" href="manifest.json"/>
+<link rel="apple-touch-icon" href="icon-192.png"/>
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css"/>
+<link rel="stylesheet" href="style.css"/>
+<title>Shot Tracker</title>
+</head>
+<body>
+
+<!-- Toast -->
+<div class="toast-wrap"><div class="toast" id="toast"></div></div>
+
+<!-- Install banner (Android/Chrome PWA prompt) -->
+<div class="install-banner" id="installBanner">
+  <i class="ti ti-device-mobile-down"></i>
+  <span>Add Shot Tracker to your home screen for offline use</span>
+  <button class="install-banner-dismiss" id="installDismiss" aria-label="Dismiss">×</button>
+</div>
+
+<!-- Settings overlay -->
+<div class="settings-overlay" id="settingsOverlay">
+  <div class="settings-panel">
+    <div class="settings-title">
+      Settings
+      <button class="btn btn-sm" id="settingsClose" style="width:auto"><i class="ti ti-x"></i></button>
+    </div>
+
+    <div class="settings-row">
+      <div>
+        <div class="settings-row-label">Storage mode</div>
+        <div class="settings-row-sub">How sessions are kept between uses</div>
+      </div>
+      <div class="toggle-wrap">
+        <button class="toggle-opt active" id="storageModeLocal">Local</button>
+        <button class="toggle-opt" id="storageModFiles">Files</button>
+      </div>
+    </div>
+    <div class="storage-note" id="storageNote"></div>
+
+    <div class="settings-row" style="margin-top:12px">
+      <div>
+        <div class="settings-row-label">Default calibration reference</div>
+        <div class="settings-row-sub">Pre-filled when calibration starts</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input type="number" id="calDefaultInput" value="1" step="0.25" min="0.1" style="width:64px;font-size:13px;padding:4px 8px;border-radius:var(--radius);border:0.5px solid var(--border-s);background:var(--bg-secondary);color:var(--text-primary)"/>
+        <span style="font-size:12px;color:var(--text-secondary)">inches</span>
+      </div>
+    </div>
+
+    <!-- Feedback -->
+    <div style="margin-top:16px;padding-top:12px;border-top:0.5px solid var(--border-t)">
+      <div class="sec-label" style="margin-bottom:8px">Send feedback</div>
+      <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px">
+        Found a bug? Have a feature idea? We'd love to hear from you.
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <a href="https://docs.google.com/forms/d/e/1FAIpQLSdAtZMd7R0NdmIinvvlbewsCCRkTY1iOY7cebsJTmz5Ta_W3g/viewform?usp=publish-editor"
+           target="_blank" rel="noopener"
+           class="btn btn-sm"
+           style="text-decoration:none">
+          <i class="ti ti-message-circle"></i> General feedback
+        </a>
+        <a href="https://github.com/TimFiez/shot-tracker/issues/new?labels=bug&template=bug_report.md&title=%5BBug%5D+"
+           target="_blank" rel="noopener"
+           class="btn btn-sm"
+           style="text-decoration:none">
+          <i class="ti ti-bug"></i> Report a bug
+        </a>
+        <a href="https://github.com/TimFiez/shot-tracker/issues/new?labels=enhancement&template=feature_request.md&title=%5BFeature%5D+"
+           target="_blank" rel="noopener"
+           class="btn btn-sm"
+           style="grid-column:1/-1;text-decoration:none">
+          <i class="ti ti-bulb"></i> Suggest a feature
+        </a>
+      </div>
+    </div>
+
+    <!-- About -->
+    <div style="margin-top:16px;padding-top:12px;border-top:0.5px solid var(--border-t)">
+      <div class="sec-label" style="margin-bottom:8px">About</div>
+      <div style="font-size:12px;color:var(--text-secondary);line-height:1.6">
+        Shot Tracker analyzes target groups using the PRB centroid method.<br>
+        R95 = Mean Radius × 2.1, per <a href="https://precisionrifleblog.com/2020/12/12/measuring-group-size-statistics-for-shooters/" target="_blank" rel="noopener" style="color:var(--text-info)">PrecisionRifleBlog</a>.<br><br>
+        <strong>Save backup</strong> creates a file you can store anywhere — tap "Save to Files" on iPhone and choose iCloud Drive to sync across all your Apple devices.<br><br>
+        Works offline. Add to home screen for an app-like experience.<br><br>
+        <a href="https://github.com/TimFiez/shot-tracker" target="_blank" rel="noopener" style="color:var(--text-info)"><i class="ti ti-brand-github" style="font-size:13px;vertical-align:-1px"></i> View source on GitHub</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     DESKTOP LAYOUT
+═══════════════════════════════════════ -->
+<div class="app-desktop">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="logo"><i class="ti ti-crosshair"></i> Shot tracker</div>
+    <div id="dSidebarContent"></div>
+  </div>
+
+  <!-- Main -->
+  <div style="display:flex;flex-direction:column;overflow:hidden">
+    <div class="tabs">
+      <div class="tab active" id="dTabSession">Current session</div>
+      <div class="tab" id="dTabComposite">Composite</div>
+      <div style="flex:1"></div>
+      <button class="btn-icon" id="dSettingsBtn" aria-label="Settings" style="margin:4px 8px;min-width:auto;width:32px;height:32px;font-size:16px"><i class="ti ti-settings"></i></button>
+    </div>
+
+    <!-- Session panel -->
+    <div id="dPanelSession" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+      <div class="step-bar" id="dStepBar"></div>
+      <div class="cal-bar" id="dCalBar" style="display:none">
+        <i class="ti ti-ruler"></i>
+        <label>Known distance:</label>
+        <input type="number" id="dRefDist" value="1" step="0.25" min="0.1"/>
+        <label>inches between 2 clicks</label>
+        <span class="cal-progress" id="dCalProg"></span>
+        <button class="btn btn-sm btn-danger" id="dCancelCal" style="margin-left:auto;width:auto">Cancel</button>
+      </div>
+      <div class="banner" id="dBanner" style="display:none"></div>
+      <div class="action-bar">
+        <div class="flex-gap4">
+          <button class="btn btn-sm" id="dModePOA"><i class="ti ti-crosshair"></i> Set POA</button>
+          <button class="btn btn-sm" id="dModeShot"><i class="ti ti-circle-dot"></i> Add shot</button>
+          <button class="btn btn-sm" id="dModeEdit"><i class="ti ti-arrows-move"></i> Edit</button>
+        </div>
+        <div class="tsep"></div>
+        <span class="pill green" id="dPoaPill">POA: not set</span>
+        <span class="pill blue"  id="dShotPill">Shots: 0</span>
+        <span class="pill amber" id="dCalPill">Cal: none</span>
+        <div class="tsep"></div>
+        <button class="btn btn-sm" id="dUndo"><i class="ti ti-arrow-back-up"></i> Undo</button>
+        <button class="btn btn-sm btn-danger" id="dDelSel" style="display:none"><i class="ti ti-trash"></i> Delete selected</button>
+      </div>
+      <div class="stats-grid">
+        <div class="stats-section">
+          <div class="stats-section-label">POA offset — group center vs aim point</div>
+          <div class="stats-row">
+            <div class="stat-card"><div class="stat-label">Shots</div><div class="stat-value" id="dsN">—</div></div>
+            <div class="stat-card"><div class="stat-label">H offset</div><div class="stat-value" id="dsH">—<span class="stat-unit" id="dsHu"></span></div></div>
+            <div class="stat-card"><div class="stat-label">V offset</div><div class="stat-value" id="dsV">—<span class="stat-unit" id="dsVu"></span></div></div>
+          </div>
+        </div>
+        <div class="stats-section">
+          <div class="stats-section-label">Group precision — from centroid (PRB method)</div>
+          <div class="stats-row">
+            <div class="stat-card"><div class="stat-label">Mean radius</div><div class="stat-value" id="dsMR">—<span class="stat-unit" id="dsMRu"></span></div></div>
+            <div class="stat-card"><div class="stat-label">R95 (MR×2.1)</div><div class="stat-value" id="dsR95">—<span class="stat-unit" id="dsR95u"></span></div></div>
+            <div class="stat-card"><div class="stat-label">Ext spread</div><div class="stat-value" id="dsES">—<span class="stat-unit" id="dsESu"></span></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="canvas-wrap" id="dCanvasWrap">
+        <div class="canvas-placeholder" id="dPlaceholder">
+          <i class="ti ti-photo"></i>
+          <p>Load a target image to begin<br><br>Calibrate → Set POA → Add shots → Save</p>
+        </div>
+        <canvas id="dCanvas" style="display:none"></canvas>
+      </div>
+    </div>
+
+    <!-- Composite panel -->
+    <div id="dPanelComposite" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+      <div class="action-bar">
+        <button class="btn btn-sm btn-primary" id="dRefreshComp"><i class="ti ti-refresh"></i> Refresh</button>
+        <button class="btn btn-sm" id="dExportSpread"><i class="ti ti-file-spreadsheet"></i> Export spreadsheet</button>
+        <button class="btn btn-sm" id="dExportImg"><i class="ti ti-photo-down"></i> Save image</button>
+        <div class="tsep"></div>
+        <span class="pill blue" id="dCompShots">All shots: 0</span>
+        <span class="pill"      id="dCompSess">Sessions: 0</span>
+      </div>
+      <div class="stats-grid">
+        <div class="stats-section">
+          <div class="stats-section-label">Composite POA offset</div>
+          <div class="stats-row">
+            <div class="stat-card"><div class="stat-label">Shots</div><div class="stat-value" id="dcN">—</div></div>
+            <div class="stat-card"><div class="stat-label">H offset</div><div class="stat-value" id="dcH">—<span class="stat-unit">in</span></div></div>
+            <div class="stat-card"><div class="stat-label">V offset</div><div class="stat-value" id="dcV">—<span class="stat-unit">in</span></div></div>
+          </div>
+        </div>
+        <div class="stats-section">
+          <div class="stats-section-label">Composite precision</div>
+          <div class="stats-row">
+            <div class="stat-card"><div class="stat-label">Mean radius</div><div class="stat-value" id="dcMR">—<span class="stat-unit">in</span></div></div>
+            <div class="stat-card"><div class="stat-label">R95</div><div class="stat-value" id="dcR95">—<span class="stat-unit">in</span></div></div>
+            <div class="stat-card"><div class="stat-label">Ext spread</div><div class="stat-value" id="dcES">—<span class="stat-unit">in</span></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="comp-canvas-wrap">
+        <div class="canvas-placeholder" id="dCompPlaceholder">
+          <i class="ti ti-layers-intersect"></i>
+          <p>Save at least one session to see composite</p>
+        </div>
+        <canvas id="compCanvas" style="display:none"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     MOBILE LAYOUT
+═══════════════════════════════════════ -->
+<div class="app-mobile">
+  <div class="mobile-topbar">
+    <div class="mobile-topbar-title"><i class="ti ti-crosshair"></i> Shot tracker</div>
+    <div class="mobile-topbar-right">
+      <button class="btn-icon" id="mSettingsBtn" aria-label="Settings"><i class="ti ti-settings"></i></button>
+      <button class="btn-icon" id="mMenuBtn" aria-label="Open menu"><i class="ti ti-menu-2"></i></button>
+    </div>
+  </div>
+
+  <div class="step-bar" id="mStepBar"></div>
+
+  <div class="cal-bar" id="mCalBar" style="display:none">
+    <i class="ti ti-ruler"></i>
+    <label>inches:</label>
+    <input type="number" id="mRefDist" value="1" step="0.25" min="0.1" style="width:52px"/>
+    <span class="cal-progress" id="mCalProg" style="flex:1"></span>
+    <button class="btn btn-sm btn-danger" id="mCancelCal" style="width:auto">Cancel</button>
+  </div>
+
+  <div class="banner" id="mBanner" style="display:none"></div>
+
+  <div class="action-bar" style="padding:6px 8px">
+    <div class="flex-gap4">
+      <button class="btn btn-sm" id="mModePOA" aria-label="Set POA"><i class="ti ti-crosshair"></i></button>
+      <button class="btn btn-sm" id="mModeShot" aria-label="Add shot"><i class="ti ti-circle-dot"></i></button>
+      <button class="btn btn-sm" id="mModeEdit" aria-label="Edit markers"><i class="ti ti-arrows-move"></i></button>
+    </div>
+    <div class="tsep"></div>
+    <span class="pill green" id="mPoaPill" style="font-size:11px">POA</span>
+    <span class="pill blue"  id="mShotPill" style="font-size:11px">0</span>
+    <span class="pill amber" id="mCalPill"  style="font-size:11px">Cal</span>
+    <div class="tsep"></div>
+    <button class="btn btn-sm" id="mUndo" aria-label="Undo"><i class="ti ti-arrow-back-up"></i></button>
+    <button class="btn btn-sm btn-danger" id="mDelSel" style="display:none" aria-label="Delete selected"><i class="ti ti-trash"></i></button>
+  </div>
+
+  <div class="canvas-wrap" id="mCanvasWrap" style="flex:1">
+    <div class="canvas-placeholder" id="mPlaceholder">
+      <i class="ti ti-photo"></i>
+      <p>Tap the menu <i class="ti ti-menu-2" style="font-size:14px"></i> to load a target image</p>
+    </div>
+    <canvas id="mCanvas" style="display:none"></canvas>
+  </div>
+
+  <div class="stats-toggle" id="mStatsToggle">
+    <span>Stats</span>
+    <i class="ti ti-chevron-down"></i>
+  </div>
+  <div class="stats-collapsible" id="mStatsPanel">
+    <div class="stats-grid" style="padding:8px">
+      <div class="stats-section">
+        <div class="stats-section-label">POA offset</div>
+        <div class="stats-row">
+          <div class="stat-card"><div class="stat-label">Shots</div><div class="stat-value" id="msN">—</div></div>
+          <div class="stat-card"><div class="stat-label">H offset</div><div class="stat-value" id="msH">—<span class="stat-unit" id="msHu"></span></div></div>
+          <div class="stat-card"><div class="stat-label">V offset</div><div class="stat-value" id="msV">—<span class="stat-unit" id="msVu"></span></div></div>
+        </div>
+      </div>
+      <div class="stats-section">
+        <div class="stats-section-label">Group precision</div>
+        <div class="stats-row">
+          <div class="stat-card"><div class="stat-label">Mean radius</div><div class="stat-value" id="msMR">—<span class="stat-unit" id="msMRu"></span></div></div>
+          <div class="stat-card"><div class="stat-label">R95</div><div class="stat-value" id="msR95">—<span class="stat-unit" id="msR95u"></span></div></div>
+          <div class="stat-card"><div class="stat-label">Ext spread</div><div class="stat-value" id="msES">—<span class="stat-unit" id="msESu"></span></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Mobile drawer -->
+<div class="drawer" id="mDrawer">
+  <div class="drawer-backdrop" id="mDrawerBackdrop"></div>
+  <div class="drawer-panel">
+    <div class="drawer-handle"></div>
+    <div id="mDrawerContent"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
