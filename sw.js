@@ -5,7 +5,7 @@
    - External CDN assets: cache-first
      → icons font rarely changes, fast from cache
 */
-const CACHE = 'shot-tracker-v7';
+const CACHE = 'shot-tracker-v9';
 const CDN_CACHE = 'shot-tracker-cdn-v1';
 
 const APP_FILES = [

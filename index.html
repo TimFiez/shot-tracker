@@ -58,6 +58,17 @@
       </div>
     </div>
 
+    <div class="settings-row">
+      <div>
+        <div class="settings-row-label">Button labels</div>
+        <div class="settings-row-sub">Show text labels on action buttons (recommended for new users)</div>
+      </div>
+      <div class="toggle-wrap">
+        <button class="toggle-opt active" id="showLabelsOn">On</button>
+        <button class="toggle-opt" id="showLabelsOff">Off</button>
+      </div>
+    </div>
+
     <!-- Feedback -->
     <div style="margin-top:16px;padding-top:12px;border-top:0.5px solid var(--border-t)">
       <div class="sec-label" style="margin-bottom:8px">Send feedback</div>
@@ -134,17 +145,17 @@
       <div class="banner" id="dBanner" style="display:none"></div>
       <div class="action-bar">
         <div class="flex-gap4">
-          <button class="btn btn-sm" id="dModePOA"><i class="ti ti-crosshair"></i> Set POA</button>
-          <button class="btn btn-sm" id="dModeShot"><i class="ti ti-circle-dot"></i> Add shot</button>
-          <button class="btn btn-sm" id="dModeEdit"><i class="ti ti-arrows-move"></i> Edit</button>
+          <button class="btn-action" id="dModePOA" aria-label="Set POA"><i class="ti ti-crosshair"></i><span class="btn-label">Set POA</span></button>
+          <button class="btn-action" id="dModeShot" aria-label="Add shot"><i class="ti ti-circle-dot"></i><span class="btn-label">Add shot</span></button>
+          <button class="btn-action" id="dModeEdit" aria-label="Edit markers"><i class="ti ti-arrows-move"></i><span class="btn-label">Edit</span></button>
         </div>
-        <div class="tsep"></div>
+        <div class="action-sep"></div>
         <span class="pill green" id="dPoaPill">POA: not set</span>
         <span class="pill blue"  id="dShotPill">Shots: 0</span>
         <span class="pill amber" id="dCalPill">Cal: none</span>
-        <div class="tsep"></div>
-        <button class="btn btn-sm" id="dUndo"><i class="ti ti-arrow-back-up"></i> Undo</button>
-        <button class="btn btn-sm btn-danger" id="dDelSel" style="display:none"><i class="ti ti-trash"></i> Delete selected</button>
+        <div class="action-sep"></div>
+        <button class="btn-action" id="dUndo" aria-label="Undo"><i class="ti ti-arrow-back-up"></i><span class="btn-label">Undo</span></button>
+        <button class="btn-action" id="dDelSel" style="display:none;color:var(--text-danger);border-color:var(--border-danger)" aria-label="Delete selected"><i class="ti ti-trash"></i><span class="btn-label">Delete</span></button>
       </div>
       <div class="stats-grid">
         <div class="stats-section">
@@ -238,17 +249,17 @@
 
   <div class="action-bar" style="padding:6px 8px">
     <div class="flex-gap4">
-      <button class="btn btn-sm" id="mModePOA" aria-label="Set POA"><i class="ti ti-crosshair"></i></button>
-      <button class="btn btn-sm" id="mModeShot" aria-label="Add shot"><i class="ti ti-circle-dot"></i></button>
-      <button class="btn btn-sm" id="mModeEdit" aria-label="Edit markers"><i class="ti ti-arrows-move"></i></button>
+      <button class="btn-action" id="mModePOA" aria-label="Set POA"><i class="ti ti-crosshair"></i><span class="btn-label">Set POA</span></button>
+      <button class="btn-action" id="mModeShot" aria-label="Add shot"><i class="ti ti-circle-dot"></i><span class="btn-label">Add shot</span></button>
+      <button class="btn-action" id="mModeEdit" aria-label="Edit"><i class="ti ti-arrows-move"></i><span class="btn-label">Edit</span></button>
     </div>
-    <div class="tsep"></div>
-    <span class="pill green" id="mPoaPill" style="font-size:11px">POA</span>
-    <span class="pill blue"  id="mShotPill" style="font-size:11px">0</span>
-    <span class="pill amber" id="mCalPill"  style="font-size:11px">Cal</span>
-    <div class="tsep"></div>
-    <button class="btn btn-sm" id="mUndo" aria-label="Undo"><i class="ti ti-arrow-back-up"></i></button>
-    <button class="btn btn-sm btn-danger" id="mDelSel" style="display:none" aria-label="Delete selected"><i class="ti ti-trash"></i></button>
+    <div class="action-sep"></div>
+    <span class="pill green" id="mPoaPill">POA</span>
+    <span class="pill blue"  id="mShotPill">0</span>
+    <span class="pill amber" id="mCalPill">Cal</span>
+    <div class="action-sep"></div>
+    <button class="btn-action" id="mUndo" aria-label="Undo"><i class="ti ti-arrow-back-up"></i><span class="btn-label">Undo</span></button>
+    <button class="btn-action" id="mDelSel" style="display:none;color:var(--text-danger);border-color:var(--border-danger)" aria-label="Delete selected"><i class="ti ti-trash"></i><span class="btn-label">Delete</span></button>
   </div>
 
   <div class="canvas-wrap" id="mCanvasWrap" style="flex:1">

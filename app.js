@@ -43,7 +43,7 @@ var compCv = document.getElementById('compCanvas');
 var compCx = compCv.getContext('2d');
 
 /* ── Settings ── */
-var settings = { storageMode: 'local', calDefault: 1 };
+var settings = { storageMode: 'local', calDefault: 1, showLabels: true };
 function loadSettings() {
   try { var s = localStorage.getItem('st_settings'); if (s) settings = Object.assign(settings, JSON.parse(s)); } catch(e) {}
 }
@@ -51,6 +51,7 @@ function saveSettings() {
   try { localStorage.setItem('st_settings', JSON.stringify(settings)); } catch(e) {}
 }
 loadSettings();
+applyShowLabels();
 
 /* ── IndexedDB ── */
 var DB_NAME = 'shot-tracker', DB_VER = 2, db = null;
@@ -192,6 +193,7 @@ function getPt(cv, cx, cy) {
 function renderBoth() { renderOn(dCv, dCx); renderOn(mCv, mCx); }
 function renderOn(cv, cx) {
   if (!currentImg) return;
+  if (cv.width === 0 || cv.height === 0) return; /* skip zero-size canvas (hidden panel) */
   var sc = getScale(cv);
   cx.clearRect(0, 0, cv.width, cv.height);
   cx.drawImage(currentImg, 0, 0, cv.width, cv.height);
@@ -328,14 +330,27 @@ function renderOnMaybeXhair(cv, cx) {
 }
 
 /* Convert a touch client position to natural image pixels,
-   also returning the canvas display coordinates for the crosshair */
+   also returning the canvas display coordinates for the crosshair.
+   getBoundingClientRect can return zeros if the canvas was recently
+   made visible — we re-size in that case. */
 function getTouchPt(cv, clientX, clientY) {
-  var r = cv.getBoundingClientRect(), sc = getScale(cv);
+  var r = cv.getBoundingClientRect();
+  /* If rect is zero, the canvas layout hasn't settled — size it now */
+  if (r.width === 0 || r.height === 0) {
+    var wrapId = (cv === mCv) ? 'mCanvasWrap' : 'dCanvasWrap';
+    var wrap = document.getElementById(wrapId);
+    if (wrap) { sizeCanvas(cv, wrap); r = cv.getBoundingClientRect(); }
+  }
+  if (r.width === 0 || r.height === 0) {
+    /* Still zero — return center as safe fallback */
+    return { nx: imgNaturalW / 2, ny: imgNaturalH / 2, displayX: cv.width / 2, displayY: cv.height / 2 };
+  }
+  var sc = getScale(cv);
   var displayX = (clientX - r.left) * (cv.width  / r.width);
   var displayY = (clientY - r.top)  * (cv.height / r.height);
-  /* The actual marker position is offset upward by TOUCH_OFFSET_Y */
+  /* The actual marker position is offset upward by TOUCH_OFFSET_Y display px */
   var markerDisplayX = displayX;
-  var markerDisplayY = displayY - TOUCH_OFFSET_Y;
+  var markerDisplayY = Math.max(0, displayY - TOUCH_OFFSET_Y);
   return {
     nx: markerDisplayX / sc,
     ny: markerDisplayY / sc,
@@ -523,22 +538,36 @@ function wireCanvas(cv) {
   cv.addEventListener('mouseup', handleMouseUp);
   cv.addEventListener('mouseleave', function() { if (!isDragging) dragTarget = null; isDragging = false; });
 
-  /* Touch — place-by-drag with precision crosshair above finger */
+  /* Touch — place-by-drag with precision crosshair above finger.
+     We always use THIS canvas (cv) as the coordinate reference —
+     whichever canvas the user is touching is the right one.
+     The crosshair state records which cv fired so renderOnMaybeXhair
+     only overlays the correct canvas. */
   cv.addEventListener('touchstart', function(e) {
     e.preventDefault();
+    /* Guard: if this canvas has no size (hidden panel), skip */
+    if (cv.width === 0 || cv.height === 0) {
+      /* Try resizing before giving up */
+      var wrap = cv.id === 'mCanvas' ? document.getElementById('mCanvasWrap') : document.getElementById('dCanvasWrap');
+      if (wrap) sizeCanvas(cv, wrap);
+      if (cv.width === 0) return;
+    }
     handleTouchStart(cv, e.touches[0]);
   }, { passive: false });
   cv.addEventListener('touchmove', function(e) {
     e.preventDefault();
+    if (cv.width === 0 || cv.height === 0) return;
     handleTouchMove(cv, e.touches[0]);
   }, { passive: false });
   cv.addEventListener('touchend', function(e) {
     e.preventDefault();
     handleTouchEnd(cv);
   }, { passive: false });
-  cv.addEventListener('touchcancel', function(e) {
+  cv.addEventListener('touchcancel', function() {
     /* Finger lifted outside canvas — commit whatever we have */
-    handleTouchEnd(cv);
+    _touchCrosshairState = null;
+    touchPlacing = null;
+    renderBoth();
   }, { passive: false });
 }
 wireCanvas(dCv); wireCanvas(mCv);
@@ -592,14 +621,13 @@ function getTargetLabel() {
 function setMode(m) {
   mode = m;
   if (m !== 'edit') { selectedTarget = null; dragTarget = null; showDelSel(false); renderBoth(); }
-  function st(id, active) {
-    var el = document.getElementById(id); if (!el) return;
-    el.style.background  = active ? 'var(--bg-info)' : '';
-    el.style.borderColor = active ? 'var(--border-info)' : '';
-    el.style.color       = active ? 'var(--text-info)' : '';
-    el.style.fontWeight  = active ? '500' : '';
-  }
-  ['d','m'].forEach(function(p) { st(p + 'ModePOA', m === 'poa'); st(p + 'ModeShot', m === 'shot'); st(p + 'ModeEdit', m === 'edit'); });
+  /* Use mode-active class for clear active state */
+  ['d','m'].forEach(function(p) {
+    ['POA','Shot','Edit'].forEach(function(name) {
+      var el = document.getElementById(p + 'Mode' + name); if (!el) return;
+      el.classList.toggle('mode-active', m === name.toLowerCase());
+    });
+  });
   updateBanner(); updateStepBar();
 }
 
@@ -1145,8 +1173,22 @@ function renderSettings() {
   document.getElementById('storageModeLocal').classList.toggle('active', settings.storageMode === 'local');
   document.getElementById('storageModFiles').classList.toggle('active', settings.storageMode === 'files');
   document.getElementById('calDefaultInput').value = settings.calDefault;
+  /* Show labels toggle */
+  var slOn  = document.getElementById('showLabelsOn');
+  var slOff = document.getElementById('showLabelsOff');
+  if (slOn)  slOn.classList.toggle('active',  settings.showLabels);
+  if (slOff) slOff.classList.toggle('active', !settings.showLabels);
 }
 function setStorageMode(m) { settings.storageMode = m; saveSettings(); renderSettings(); toast(m === 'files' ? 'Backup-to-file mode enabled' : 'Local storage mode enabled'); }
+
+/* Apply showLabels setting to body class — drives CSS label visibility */
+function applyShowLabels() {
+  document.body.classList.toggle('show-labels', !!settings.showLabels);
+}
+function setShowLabels(v) {
+  settings.showLabels = v; saveSettings(); applyShowLabels(); renderSettings();
+  toast(v ? 'Button labels shown' : 'Button labels hidden');
+}
 
 /* ── Mobile drawer ── */
 function openMobileDrawer() { renderSidebars(); document.getElementById('mDrawer').classList.add('open'); }
@@ -1194,6 +1236,8 @@ wire('settingsClose',    'click', closeSettings);
 wire('settingsOverlay',  'click', function(e) { if (e.target === this) closeSettings(); });
 wire('storageModeLocal', 'click', function() { setStorageMode('local'); });
 wire('storageModFiles',  'click', function() { setStorageMode('files'); });
+wire('showLabelsOn',  'click', function() { setShowLabels(true); });
+wire('showLabelsOff', 'click', function() { setShowLabels(false); });
 wire('calDefaultInput',  'change', function() { var v = parseFloat(this.value) || 1; settings.calDefault = v; saveSettings(); toast('Default cal distance set to ' + v + '"'); });
 wire('mStatsToggle', 'click', function() { this.classList.toggle('open'); document.getElementById('mStatsPanel').classList.toggle('open'); });
 wire('installBanner',  'click', triggerInstall);

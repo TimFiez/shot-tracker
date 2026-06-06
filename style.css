@@ -375,3 +375,77 @@ canvas { display: block; max-width: 100%; max-height: 100%; touch-action: none; 
   animation: savePulse 2s ease-in-out infinite;
   cursor: pointer;
 }
+
+/* ════════════════════════════════════════
+   OPTION A: Clear visual distinction between
+   action buttons and status pills
+════════════════════════════════════════ */
+
+/* Status pills — clearly passive, no button affordance */
+.pill {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 0.5px solid var(--border-t);
+  border-radius: 100px;
+  padding: 2px 8px;
+  cursor: default;        /* no pointer cursor — not tappable */
+  user-select: none;
+  -webkit-user-select: none;
+  letter-spacing: 0.02em;
+}
+.pill.green { color: var(--text-success); border-color: var(--border-success); background: var(--bg-success); }
+.pill.blue  { color: var(--text-info);    border-color: var(--border-info);    background: var(--bg-info);    }
+.pill.amber { color: var(--text-warning); border-color: var(--border-warning); background: var(--bg-warning); }
+
+/* Action buttons — clear button shape, tappable affordance */
+.btn-action {
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-s);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  min-height: 32px;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.1s, opacity 0.1s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+.btn-action:hover  { background: var(--bg-tertiary); }
+.btn-action:active { opacity: 0.7; }
+
+/* Active mode button — filled, clearly selected */
+.btn-action.mode-active {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  border-color: transparent;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+/* OPTION C: Label visibility toggle
+   .show-labels  = always show text label
+   (default mobile) = icon only, text hidden
+   Body gets class 'show-labels' when setting is on */
+.btn-action .btn-label {
+  display: none; /* hidden by default on mobile */
+}
+@media (min-width: 641px) {
+  /* Desktop: always show labels */
+  .btn-action .btn-label { display: inline; }
+}
+body.show-labels .btn-action .btn-label {
+  display: inline; /* show-labels setting overrides */
+}
+
+/* Separator in action bar */
+.action-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border-t);
+  flex-shrink: 0;
+}
