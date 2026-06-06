@@ -267,31 +267,95 @@ function hitTest(nx, ny, cv) {
 }
 
 /* ════════════════════════════════════════
-   CANVAS EVENT HANDLER
-   calMode always checked first, always returns.
+   TOUCH PLACE-BY-DRAG
+   ─────────────────────────────────────
+   On touch devices, every placement is a drag:
+     touchstart → place marker tentatively at touch point
+     touchmove  → update marker position live, draw floating
+                  precision crosshair ABOVE the finger
+     touchend   → commit position
+
+   The floating crosshair is drawn 80px above the finger
+   in canvas-display coordinates so the finger never
+   obscures the marker being placed.
+
+   Mouse on desktop uses the original click-to-place.
+   ─────────────────────────────────────
+   touchPlacing tracks what we're currently placing:
+     null | {type: 'cal'|'poa'|'shot', idx: N}
 ════════════════════════════════════════ */
-function handleDown(cv, clientX, clientY) {
+var touchPlacing = null;  /* active touch placement state */
+var TOUCH_OFFSET_Y = 80;  /* px above finger in canvas display coords */
+
+/* Draw a precision crosshair above the finger during touch drag */
+function drawTouchCrosshair(cv, cx, displayX, displayY) {
+  var x = displayX, y = displayY - TOUCH_OFFSET_Y;
+  cx.save();
+  /* Outer ring */
+  cx.strokeStyle = 'rgba(255,255,255,0.9)'; cx.lineWidth = 3;
+  cx.beginPath(); cx.arc(x, y, 18, 0, Math.PI * 2); cx.stroke();
+  cx.strokeStyle = 'rgba(30,30,30,0.9)'; cx.lineWidth = 1.5;
+  cx.beginPath(); cx.arc(x, y, 18, 0, Math.PI * 2); cx.stroke();
+  /* Crosshair lines */
+  cx.strokeStyle = 'rgba(30,30,30,0.9)'; cx.lineWidth = 1.5;
+  cx.beginPath(); cx.moveTo(x - 24, y); cx.lineTo(x - 4, y); cx.stroke();
+  cx.beginPath(); cx.moveTo(x + 4,  y); cx.lineTo(x + 24, y); cx.stroke();
+  cx.beginPath(); cx.moveTo(x, y - 24); cx.lineTo(x, y - 4); cx.stroke();
+  cx.beginPath(); cx.moveTo(x, y + 4);  cx.lineTo(x, y + 24); cx.stroke();
+  /* Centre dot */
+  cx.fillStyle = 'rgba(30,30,30,0.9)';
+  cx.beginPath(); cx.arc(x, y, 2, 0, Math.PI * 2); cx.fill();
+  /* Stem line from crosshair down to finger touch point */
+  cx.strokeStyle = 'rgba(255,255,255,0.7)'; cx.lineWidth = 2; cx.setLineDash([4, 3]);
+  cx.beginPath(); cx.moveTo(x, y + 20); cx.lineTo(displayX, displayY); cx.stroke();
+  cx.setLineDash([]);
+  cx.restore();
+}
+
+/* renderBothWithCrosshair: render both canvases, optionally overlaying
+   the precision crosshair on one of them during a touch drag.
+   We call this instead of renderBoth() during touchmove. */
+var _touchCrosshairState = null; /* {cv, displayX, displayY} */
+function renderBothMaybeXhair() {
+  renderOnMaybeXhair(dCv, dCx);
+  renderOnMaybeXhair(mCv, mCx);
+}
+function renderOnMaybeXhair(cv, cx) {
+  renderOn(cv, cx);
+  if (_touchCrosshairState && _touchCrosshairState.cv === cv) {
+    drawTouchCrosshair(cv, cx, _touchCrosshairState.displayX, _touchCrosshairState.displayY);
+  }
+}
+
+/* Convert a touch client position to natural image pixels,
+   also returning the canvas display coordinates for the crosshair */
+function getTouchPt(cv, clientX, clientY) {
+  var r = cv.getBoundingClientRect(), sc = getScale(cv);
+  var displayX = (clientX - r.left) * (cv.width  / r.width);
+  var displayY = (clientY - r.top)  * (cv.height / r.height);
+  /* The actual marker position is offset upward by TOUCH_OFFSET_Y */
+  var markerDisplayX = displayX;
+  var markerDisplayY = displayY - TOUCH_OFFSET_Y;
+  return {
+    nx: markerDisplayX / sc,
+    ny: markerDisplayY / sc,
+    displayX: displayX,
+    displayY: displayY
+  };
+}
+
+/* ── MOUSE handlers (click-to-place, unchanged) ── */
+function handleMouseDown(cv, clientX, clientY) {
   if (!currentImg) return;
   var pt = getPt(cv, clientX, clientY);
 
-  /* CALIBRATION — isolated, always returns */
+  /* CALIBRATION */
   if (calMode) {
     calPoints.push({ nx: pt.nx, ny: pt.ny });
-    updateCalProgress();
-    renderBoth();
-    if (calPoints.length === 2) {
-      var refIn = getRefDistVal();
-      var dx = calPoints[1].nx - calPoints[0].nx, dy = calPoints[1].ny - calPoints[0].ny;
-      pxPerInch = Math.sqrt(dx * dx + dy * dy) / refIn;
-      calMode = false;
-      hideCalBar(); updateCalPill(); renderBoth(); updateStepBar(); updateBanner();
-      markDirty(); /* calibration is a change */
-      toast('Calibrated: ' + pxPerInch.toFixed(1) + ' px/in — now click your POA');
-      setMode('poa');
-    }
+    updateCalProgress(); renderBoth();
+    if (calPoints.length === 2) commitCalibration();
     return;
   }
-
   /* EDIT */
   if (mode === 'edit') {
     var hit = hitTest(pt.nx, pt.ny, cv);
@@ -299,26 +363,22 @@ function handleDown(cv, clientX, clientY) {
     else { selectedTarget = null; dragTarget = null; showDelSel(false); }
     renderBoth(); return;
   }
-
   /* POA */
   if (mode === 'poa') {
     poa = { nx: pt.nx, ny: pt.ny };
     updatePOAPill(); renderBoth(); updateStats(); updateStepBar(); updateBanner();
-    markDirty();
-    setMode('shot'); return;
+    markDirty(); setMode('shot'); return;
   }
-
   /* SHOT */
   if (mode === 'shot') {
     if (!poa) { toast('Set POA first'); return; }
     shots.push({ nx: pt.nx, ny: pt.ny });
     updateShotPill(); renderBoth(); updateStats(); updateStepBar(); updateBanner();
-    markDirty();
-    return;
+    markDirty(); return;
   }
 }
 
-function handleMove(cv, clientX, clientY) {
+function handleMouseMove(cv, clientX, clientY) {
   if (!currentImg || mode !== 'edit' || !dragTarget) return;
   isDragging = true;
   var pt = getPt(cv, clientX, clientY);
@@ -326,26 +386,160 @@ function handleMove(cv, clientX, clientY) {
   else shots[dragTarget.idx] = { nx: pt.nx, ny: pt.ny };
   renderBoth(); updateStats();
 }
-function handleUp() {
+function handleMouseUp() {
   if (isDragging) { toast('Marker moved'); isDragging = false; markDirty(); }
   dragTarget = null;
 }
 
+/* ── TOUCH handlers (place-by-drag) ── */
+function handleTouchStart(cv, t) {
+  if (!currentImg) return;
+  var pt = getTouchPt(cv, t.clientX, t.clientY);
+  _touchCrosshairState = { cv: cv, displayX: pt.displayX, displayY: pt.displayY };
+
+  /* CALIBRATION */
+  if (calMode) {
+    /* Place tentatively — will commit on touchend */
+    var idx = calPoints.length; /* 0 or 1 */
+    if (idx < 2) {
+      if (calPoints.length <= idx) calPoints.push({ nx: pt.nx, ny: pt.ny });
+      else calPoints[idx] = { nx: pt.nx, ny: pt.ny };
+      touchPlacing = { type: 'cal', idx: idx };
+      updateCalProgress(); renderBothMaybeXhair();
+    }
+    return;
+  }
+
+  /* EDIT — drag existing marker */
+  if (mode === 'edit') {
+    var hit = hitTest(pt.nx, pt.ny, cv);
+    if (hit) {
+      dragTarget = hit; selectedTarget = hit; isDragging = false;
+      touchPlacing = { type: 'edit', hit: hit };
+      showDelSel(true);
+    } else {
+      selectedTarget = null; dragTarget = null; showDelSel(false);
+      touchPlacing = null;
+    }
+    renderBothMaybeXhair(); return;
+  }
+
+  /* POA — place tentatively */
+  if (mode === 'poa') {
+    poa = { nx: pt.nx, ny: pt.ny };
+    touchPlacing = { type: 'poa' };
+    updatePOAPill(); renderBothMaybeXhair(); updateStats(); return;
+  }
+
+  /* SHOT — place tentatively */
+  if (mode === 'shot') {
+    if (!poa) { toast('Set POA first'); _touchCrosshairState = null; return; }
+    shots.push({ nx: pt.nx, ny: pt.ny });
+    touchPlacing = { type: 'shot', idx: shots.length - 1 };
+    updateShotPill(); renderBothMaybeXhair(); updateStats(); return;
+  }
+}
+
+function handleTouchMove(cv, t) {
+  if (!currentImg || !touchPlacing) return;
+  var pt = getTouchPt(cv, t.clientX, t.clientY);
+  _touchCrosshairState = { cv: cv, displayX: pt.displayX, displayY: pt.displayY };
+
+  if (touchPlacing.type === 'cal') {
+    calPoints[touchPlacing.idx] = { nx: pt.nx, ny: pt.ny };
+    renderBothMaybeXhair(); return;
+  }
+  if (touchPlacing.type === 'edit' && dragTarget) {
+    isDragging = true;
+    if (dragTarget.type === 'poa') poa = { nx: pt.nx, ny: pt.ny };
+    else shots[dragTarget.idx] = { nx: pt.nx, ny: pt.ny };
+    renderBothMaybeXhair(); updateStats(); return;
+  }
+  if (touchPlacing.type === 'poa') {
+    poa = { nx: pt.nx, ny: pt.ny };
+    renderBothMaybeXhair(); updateStats(); return;
+  }
+  if (touchPlacing.type === 'shot') {
+    shots[touchPlacing.idx] = { nx: pt.nx, ny: pt.ny };
+    renderBothMaybeXhair(); updateStats(); return;
+  }
+}
+
+function handleTouchEnd(cv) {
+  _touchCrosshairState = null; /* hide crosshair */
+
+  if (!touchPlacing) { renderBoth(); return; }
+
+  var tp = touchPlacing;
+  touchPlacing = null;
+
+  if (tp.type === 'cal') {
+    /* Commit cal point — if this was point 2, finalize calibration */
+    if (calPoints.length === 2) {
+      commitCalibration();
+    } else {
+      renderBoth(); updateCalProgress();
+    }
+    return;
+  }
+  if (tp.type === 'edit') {
+    if (isDragging) { toast('Marker moved'); isDragging = false; markDirty(); }
+    dragTarget = null; renderBoth(); return;
+  }
+  if (tp.type === 'poa') {
+    updateStepBar(); updateBanner(); markDirty();
+    renderBoth(); updateStats();
+    setMode('shot'); return;
+  }
+  if (tp.type === 'shot') {
+    updateStepBar(); updateBanner(); markDirty();
+    renderBoth(); updateStats(); return;
+  }
+}
+
+/* Shared calibration commit logic */
+function commitCalibration() {
+  var refIn = getRefDistVal();
+  var dx = calPoints[1].nx - calPoints[0].nx, dy = calPoints[1].ny - calPoints[0].ny;
+  pxPerInch = Math.sqrt(dx * dx + dy * dy) / refIn;
+  calMode = false;
+  hideCalBar(); updateCalPill(); renderBoth(); updateStepBar(); updateBanner();
+  markDirty();
+  toast('Calibrated: ' + pxPerInch.toFixed(1) + ' px/in — now set your POA');
+  setMode('poa');
+}
+
 function wireCanvas(cv) {
-  cv.addEventListener('mousedown', function(e) { handleDown(cv, e.clientX, e.clientY); });
+  /* Mouse — click to place (desktop) */
+  cv.addEventListener('mousedown', function(e) { handleMouseDown(cv, e.clientX, e.clientY); });
   cv.addEventListener('mousemove', function(e) {
     if (!currentImg) return;
     if (calMode) { cv.style.cursor = 'crosshair'; return; }
     if (mode === 'edit') {
-      if (dragTarget) { handleMove(cv, e.clientX, e.clientY); cv.style.cursor = 'grabbing'; }
+      if (dragTarget) { handleMouseMove(cv, e.clientX, e.clientY); cv.style.cursor = 'grabbing'; }
       else { var p = getPt(cv, e.clientX, e.clientY); cv.style.cursor = hitTest(p.nx, p.ny, cv) ? 'grab' : 'default'; }
     } else cv.style.cursor = 'crosshair';
   });
-  cv.addEventListener('mouseup', handleUp);
+  cv.addEventListener('mouseup', handleMouseUp);
   cv.addEventListener('mouseleave', function() { if (!isDragging) dragTarget = null; isDragging = false; });
-  cv.addEventListener('touchstart', function(e) { e.preventDefault(); var t = e.touches[0]; handleDown(cv, t.clientX, t.clientY); }, { passive: false });
-  cv.addEventListener('touchmove',  function(e) { e.preventDefault(); var t = e.touches[0]; handleMove(cv, t.clientX, t.clientY); }, { passive: false });
-  cv.addEventListener('touchend', handleUp);
+
+  /* Touch — place-by-drag with precision crosshair above finger */
+  cv.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    handleTouchStart(cv, e.touches[0]);
+  }, { passive: false });
+  cv.addEventListener('touchmove', function(e) {
+    e.preventDefault();
+    handleTouchMove(cv, e.touches[0]);
+  }, { passive: false });
+  cv.addEventListener('touchend', function(e) {
+    e.preventDefault();
+    handleTouchEnd(cv);
+  }, { passive: false });
+  cv.addEventListener('touchcancel', function(e) {
+    /* Finger lifted outside canvas — commit whatever we have */
+    handleTouchEnd(cv);
+  }, { passive: false });
 }
 wireCanvas(dCv); wireCanvas(mCv);
 
