@@ -317,3 +317,30 @@ git add . && git commit -m "description" && git push
 ---
 
 *Last updated: May 2026. Built in collaboration with Claude (Anthropic).*
+---
+
+## Data model v2 (Session + Targets)
+
+Restructured May 2026 based on real-world workflow feedback.
+
+### Old model (v1)
+Each 'session' was one image with one calibration, POA, and N shots. Users had to re-enter name/distance/notes for every target photo.
+
+### New model (v2)
+- **Session** = one range trip or load being tested (name, distance, notes, date)
+- **Target** = one image within a session (label, imgSrc, imgW, imgH, pxPerInch, poa, shots[])
+- One session has one to many targets
+- Composite view shows all shots across all targets in a session, color-coded by target
+
+### Key decisions
+- **Calibration is per target** — every image gets its own pxPerInch because phone photos are taken at variable distances from the target. No "copy cal from previous" option (kept simple until user demand justifies complexity).
+- **Target label defaults to image filename** — sensible default, user can override before saving.
+- **Session is created first** — load image button is gated behind having an active session. Prevents orphaned images.
+- **Save/New session buttons** moved above the image loading section per user feedback.
+- **Active session shown as a highlighted card** in the sidebar. Active target highlighted within it.
+- **DB version bumped to 2** — migration code wraps old v1 sessions into the new structure (best-effort; old flat sessions become sessions with no targets).
+
+### Backup file version
+- v1 (old): flat session with imgSrc, poa, shots at top level
+- v2 (old): same flat structure
+- v3 (new): sessions[] with targets[] nested within each session
