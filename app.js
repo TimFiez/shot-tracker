@@ -1,16 +1,14 @@
 /* ════════════════════════════════════════════════════════
-   Shot Tracker — app.js  (data model v2)
+   Shot Tracker — app.js  (data model v2, save UX v2)
 
    DATA MODEL:
-     sessions[]  — top-level: name, dist, notes, date, targets[]
-     targets[]   — per session: label, imgSrc, imgW, imgH,
-                   pxPerInch, poa, shots[]
+     sessions[]  — name, dist, notes, date, targets[]
+     targets[]   — label, imgSrc, imgW/H, pxPerInch, poa, shots[]
 
-   CANVAS STATE (current target being worked on):
-     currentImg, imgNaturalW, imgNaturalH
-     pxPerInch, poa, shots[]
-     calMode, calPoints[]
-     mode ('poa'|'shot'|'edit')
+   SAVE BUTTON STATES:
+     'clean'   — saved, no changes     → quiet green outline
+     'dirty'   — unsaved changes exist → amber + pulse
+     'saving'  — just saved            → solid green (2 s flash) → clean
 
    KEY INVARIANT:
      calMode is ALWAYS checked first in handleDown() in an isolated
@@ -27,9 +25,14 @@ var dragTarget = null, selectedTarget = null, isDragging = false;
 var HIT_R = 20;
 
 /* ── App state ── */
-var sessions = [];          /* Session[] */
-var activeSessionIdx = -1;  /* which session is open */
-var activeTargetIdx = -1;   /* which target within that session is on canvas */
+var sessions = [];
+var activeSessionIdx = -1;
+var activeTargetIdx  = -1;
+
+/* ── Save button state ── */
+/* 'none' = no target loaded, 'dirty' = unsaved, 'clean' = saved */
+var saveState = 'none';
+var _saveFlashTimer = null;
 
 /* ── Canvas elements ── */
 var dCv  = document.getElementById('dCanvas');
@@ -57,7 +60,6 @@ function openDB() {
       var req = indexedDB.open(DB_NAME, DB_VER);
       req.onupgradeneeded = function(e) {
         var d = e.target.result;
-        /* Clear old v1 store if present */
         if (d.objectStoreNames.contains('sessions')) d.deleteObjectStore('sessions');
         d.createObjectStore('sessions', { keyPath: 'id', autoIncrement: true });
       };
@@ -109,6 +111,62 @@ function newTarget(label, imgSrc, imgW, imgH) {
   return { id: genId(), label: label || 'Target 1', imgSrc: imgSrc, imgW: imgW, imgH: imgH, pxPerInch: null, poa: null, shots: [], savedAt: new Date().toISOString() };
 }
 
+/* ════════════════════════════════════════
+   SAVE BUTTON STATE MACHINE
+   markDirty()  — call whenever canvas changes (shot added, poa moved, cal done)
+   markClean()  — call after a successful save
+   markNone()   — call when canvas is cleared (no target loaded)
+════════════════════════════════════════ */
+function markDirty() {
+  if (_saveFlashTimer) { clearTimeout(_saveFlashTimer); _saveFlashTimer = null; }
+  saveState = 'dirty';
+  applySaveButtonStyle();
+}
+function markClean() {
+  saveState = 'saving'; /* flash green solid */
+  applySaveButtonStyle();
+  if (_saveFlashTimer) clearTimeout(_saveFlashTimer);
+  _saveFlashTimer = setTimeout(function() {
+    saveState = 'clean';
+    applySaveButtonStyle();
+    _saveFlashTimer = null;
+  }, 2000);
+}
+function markNone() {
+  if (_saveFlashTimer) { clearTimeout(_saveFlashTimer); _saveFlashTimer = null; }
+  saveState = 'none';
+  applySaveButtonStyle();
+}
+
+function applySaveButtonStyle() {
+  /* Applies to both the step-bar save step (rendered dynamically) and
+     the sidebar "Save target" button (id=dSaveTargetBtn / mSaveTargetBtn) */
+  updateStepBar(); /* re-renders step bar including save step style */
+  updateSidebarSaveBtn();
+}
+
+function updateSidebarSaveBtn() {
+  ['dSaveTargetBtn','mSaveTargetBtn'].forEach(function(id) {
+    var el = document.getElementById(id); if (!el) return;
+    el.className = 'btn ' + saveBtnClass();
+    el.style.animation = saveState === 'dirty' ? 'savePulse 2s ease-in-out infinite' : '';
+  });
+}
+
+function saveBtnClass() {
+  if (saveState === 'dirty')  return 'btn-save-dirty';
+  if (saveState === 'saving') return 'btn-save-saving';
+  if (saveState === 'clean')  return 'btn-save-clean';
+  return 'btn-save-none'; /* no target loaded */
+}
+
+/* Step bar save step gets its own color treatment based on saveState */
+function saveBtnStepState() {
+  if (saveState === 'dirty')  return 'dirty';
+  if (saveState === 'saving' || saveState === 'clean') return 'done';
+  return 'pending';
+}
+
 /* ── Canvas geometry ── */
 function getScale(cv) { return imgNaturalW > 0 ? cv.width / imgNaturalW : 1; }
 function sizeCanvas(cv, wrap) {
@@ -120,7 +178,8 @@ function sizeCanvas(cv, wrap) {
 }
 function getPt(cv, cx, cy) {
   var r = cv.getBoundingClientRect(), sc = getScale(cv);
-  return { nx: ((cx - r.left) * (cv.width / r.width)) / sc, ny: ((cy - r.top) * (cv.height / r.height)) / sc };
+  return { nx: ((cx - r.left) * (cv.width / r.width)) / sc,
+           ny: ((cy - r.top)  * (cv.height / r.height)) / sc };
 }
 
 /* ── Drawing ── */
@@ -144,7 +203,8 @@ function renderOn(cv, cx) {
   if (st && shots.length >= 2)
     drawCentroid(cx, (poa.nx + st.centroidX_px) * sc, (poa.ny + st.centroidY_px) * sc);
   shots.forEach(function(s, i) {
-    drawShot(cx, s.nx * sc, s.ny * sc, i + 1, '#3b82f6', selectedTarget && selectedTarget.type === 'shot' && selectedTarget.idx === i);
+    drawShot(cx, s.nx * sc, s.ny * sc, i + 1, '#3b82f6',
+             selectedTarget && selectedTarget.type === 'shot' && selectedTarget.idx === i);
   });
 }
 function drawCalPt(c, x, y, l) {
@@ -219,6 +279,7 @@ function handleDown(cv, clientX, clientY) {
       pxPerInch = Math.sqrt(dx * dx + dy * dy) / refIn;
       calMode = false;
       hideCalBar(); updateCalPill(); renderBoth(); updateStepBar(); updateBanner();
+      markDirty(); /* calibration is a change */
       toast('Calibrated: ' + pxPerInch.toFixed(1) + ' px/in — now click your POA');
       setMode('poa');
     }
@@ -237,6 +298,7 @@ function handleDown(cv, clientX, clientY) {
   if (mode === 'poa') {
     poa = { nx: pt.nx, ny: pt.ny };
     updatePOAPill(); renderBoth(); updateStats(); updateStepBar(); updateBanner();
+    markDirty();
     setMode('shot'); return;
   }
 
@@ -244,9 +306,12 @@ function handleDown(cv, clientX, clientY) {
   if (mode === 'shot') {
     if (!poa) { toast('Set POA first'); return; }
     shots.push({ nx: pt.nx, ny: pt.ny });
-    updateShotPill(); renderBoth(); updateStats(); updateStepBar(); updateBanner(); return;
+    updateShotPill(); renderBoth(); updateStats(); updateStepBar(); updateBanner();
+    markDirty();
+    return;
   }
 }
+
 function handleMove(cv, clientX, clientY) {
   if (!currentImg || mode !== 'edit' || !dragTarget) return;
   isDragging = true;
@@ -255,7 +320,10 @@ function handleMove(cv, clientX, clientY) {
   else shots[dragTarget.idx] = { nx: pt.nx, ny: pt.ny };
   renderBoth(); updateStats();
 }
-function handleUp() { if (isDragging) { toast('Marker moved'); isDragging = false; } dragTarget = null; }
+function handleUp() {
+  if (isDragging) { toast('Marker moved'); isDragging = false; markDirty(); }
+  dragTarget = null;
+}
 
 function wireCanvas(cv) {
   cv.addEventListener('mousedown', function(e) { handleDown(cv, e.clientX, e.clientY); });
@@ -308,6 +376,18 @@ function showDelSel(show) {
   document.getElementById('mDelSel').style.display = show ? 'flex' : 'none';
 }
 
+/* ── Target label field ── */
+function updateTargetLabelInput(val) {
+  ['dTargetLabel','mTargetLabel'].forEach(function(id) {
+    var el = document.getElementById(id); if (el) el.value = val != null ? val : '';
+  });
+}
+function getTargetLabel() {
+  /* Always read from the input — it is the source of truth */
+  var el = document.getElementById('dTargetLabel');
+  return (el && el.value.trim()) ? el.value.trim() : '';
+}
+
 /* ── Mode ── */
 function setMode(m) {
   mode = m;
@@ -328,30 +408,43 @@ function updateStepBar() { renderStepBar('dStepBar'); renderStepBar('mStepBar');
 function renderStepBar(elId) {
   var el = document.getElementById(elId); if (!el) return;
   var calDone = !!pxPerInch, poaDone = !!poa, shotsDone = shots.length > 0;
-  function mk(icon, label, state, fn) {
+  var ss = saveBtnStepState(); /* 'dirty' | 'done' | 'pending' */
+
+  function mk(icon, label, state, fn, extraClass) {
+    var cls = 'step';
+    if (state === 'active') cls += ' active';
+    else if (state === 'done') cls += ' done';
+    else if (state === 'dirty') cls += ' dirty';
+    if (fn) cls += ' clickable';
+    if (extraClass) cls += ' ' + extraClass;
     var d = document.createElement('div');
-    d.className = 'step' + (state === 'active' ? ' active' : state === 'done' ? ' done' : '') + (fn ? ' clickable' : '');
+    d.className = cls;
     d.innerHTML = '<i class="ti ti-' + icon + '"></i><span>' + label + '</span>';
-    if (fn) d.addEventListener('click', fn); return d;
+    if (fn) d.addEventListener('click', fn);
+    return d;
   }
   function arr() { var s = document.createElement('span'); s.className = 'step-arr'; s.textContent = '›'; return s; }
+
   el.innerHTML = '';
-  el.appendChild(mk('ruler',        'Calibrate', calDone ? 'done' : (calMode ? 'active' : 'pending'), function() { if (!calMode) startCal(); }));
+  el.appendChild(mk('ruler',        'Calibrate', calDone ? 'done' : (calMode ? 'active' : 'pending'),
+    function() { if (!calMode) startCal(); }));
   el.appendChild(arr());
-  el.appendChild(mk('crosshair',    'Set POA',   poaDone ? 'done' : (!calMode && pxPerInch && mode === 'poa'  ? 'active' : 'pending'), function() { if (pxPerInch && !calMode) setMode('poa'); }));
+  el.appendChild(mk('crosshair',    'Set POA', poaDone ? 'done' : (!calMode && pxPerInch && mode === 'poa' ? 'active' : 'pending'),
+    function() { if (pxPerInch && !calMode) setMode('poa'); }));
   el.appendChild(arr());
-  el.appendChild(mk('circle-dot',   'Add shots', shotsDone ? 'done' : (!calMode && poa && mode === 'shot' ? 'active' : 'pending'), function() { if (poa && !calMode) setMode('shot'); }));
+  el.appendChild(mk('circle-dot',   'Add shots', shotsDone ? 'done' : (!calMode && poa && mode === 'shot' ? 'active' : 'pending'),
+    function() { if (poa && !calMode) setMode('shot'); }));
   el.appendChild(arr());
-  el.appendChild(mk('device-floppy','Save target', shotsDone ? 'pending' : 'pending', function() { if (shots.length > 0) saveCurrentTarget(); }));
+  el.appendChild(mk('device-floppy','Save target', ss,
+    function() { if (shots.length > 0) saveCurrentTarget(); }));
 }
 
 /* ── Banner ── */
 function updateBanner() {
   var msg = '', cls = 'banner-neutral';
   if (!currentImg) {
-    /* Show prompt to load first image or add another */
     var sess = activeSessionIdx >= 0 ? sessions[activeSessionIdx] : null;
-    if (sess) { cls = 'banner-info'; msg = '<i class="ti ti-photo-up"></i> Load a target image to add to this session, or save the session when done'; }
+    if (sess) { cls = 'banner-info'; msg = '<i class="ti ti-photo-up"></i> Load a target image to add to this session, or save backup when done'; }
   } else if (calMode) {
     cls = 'banner-warn'; msg = '<i class="ti ti-ruler"></i> Click point ' + (calPoints.length + 1) + ' of 2 on two corners of a 1" grid square';
   } else if (!pxPerInch) {
@@ -362,8 +455,10 @@ function updateBanner() {
     cls = 'banner-info'; msg = '<i class="ti ti-circle-dot"></i> Click each bullet hole — orange = centroid, red dashed = R95';
   } else if (mode === 'edit') {
     cls = 'banner-neutral'; msg = '<i class="ti ti-arrows-move"></i> Click a marker to select, drag to reposition';
+  } else if (poa && shots.length > 0 && saveState === 'dirty') {
+    cls = 'banner-warn'; msg = '<i class="ti ti-device-floppy"></i> Unsaved changes — hit Save target when ready';
   } else if (poa && shots.length > 0) {
-    cls = 'banner-success'; msg = '<i class="ti ti-check"></i> ' + shots.length + ' shot' + (shots.length > 1 ? 's' : '') + ' marked — save this target or load another image';
+    cls = 'banner-success'; msg = '<i class="ti ti-check"></i> ' + shots.length + ' shot' + (shots.length > 1 ? 's' : '') + ' marked — load another image or save backup when done';
   }
   ['dBanner','mBanner'].forEach(function(id) {
     var el = document.getElementById(id); if (!el) return;
@@ -406,51 +501,41 @@ function updateStats() {
 /* ── Image load ── */
 function loadImageFile(file) {
   if (!file) return;
-  /* Require an active session first */
   if (activeSessionIdx < 0) { toast('Create or open a session first'); return; }
   var reader = new FileReader();
   reader.onload = function(ev) {
+    var imgSrc = ev.target.result;
     var img = new Image();
     img.onload = function() {
-      /* Clear canvas state for new target */
       currentImg = img; imgNaturalW = img.naturalWidth; imgNaturalH = img.naturalHeight;
       poa = null; shots = []; pxPerInch = null; calMode = false; calPoints = [];
       selectedTarget = null; dragTarget = null; activeTargetIdx = -1;
+      window._pendingImgSrc = imgSrc;
+      /* FIX: derive label from filename and keep it as the canonical label */
+      var fileLabel = file.name.replace(/\.[^.]+$/, '');
+      window._currentTargetLabel = fileLabel; /* single source of truth */
       hideCalBar(); updatePOAPill(); updateShotPill(); updateCalPill(); showDelSel(false);
       ['dPlaceholder','mPlaceholder'].forEach(function(id) { var e = document.getElementById(id); if (e) e.style.display = 'none'; });
       dCv.style.display = 'block'; mCv.style.display = 'block';
       sizeCanvas(dCv, document.getElementById('dCanvasWrap'));
       sizeCanvas(mCv, document.getElementById('mCanvasWrap'));
       renderBoth(); updateStats();
-      /* Auto-name: use filename, strip extension */
-      var autoLabel = file.name.replace(/\.[^.]+$/, '');
-      var sess = sessions[activeSessionIdx];
-      var tNum = sess.targets.length + 1;
-      /* Store a pending target (not yet committed) with the image */
-      window._pendingTargetLabel = autoLabel || ('Target ' + tNum);
-      updateTargetLabelInput(window._pendingTargetLabel);
+      updateTargetLabelInput(fileLabel);
+      markDirty(); /* new image loaded — needs saving */
       startCal();
       renderSidebars();
     };
-    img.src = ev.target.result;
-    window._pendingImgSrc = ev.target.result;
+    img.src = imgSrc;
   };
   reader.readAsDataURL(file);
-}
-
-function updateTargetLabelInput(val) {
-  ['dTargetLabel','mTargetLabel'].forEach(function(id) { var e = document.getElementById(id); if (e) e.value = val || ''; });
-}
-function getTargetLabel() {
-  var el = document.getElementById('dTargetLabel'); return el ? el.value : '';
 }
 
 /* ── Undo / delete selected ── */
 function undoLast() {
   if (calMode && calPoints.length > 0) { calPoints.pop(); updateCalProgress(); renderBoth(); updateBanner(); return; }
   if (mode === 'edit') { toast('Drag to reposition, or use "Delete selected"'); return; }
-  if (shots.length > 0) { shots.pop(); updateShotPill(); }
-  else if (poa) { poa = null; updatePOAPill(); setMode('poa'); }
+  if (shots.length > 0) { shots.pop(); updateShotPill(); markDirty(); }
+  else if (poa) { poa = null; updatePOAPill(); setMode('poa'); markDirty(); }
   renderBoth(); updateStats(); updateStepBar(); updateBanner();
 }
 function deleteSelected() {
@@ -458,46 +543,52 @@ function deleteSelected() {
   if (selectedTarget.type === 'poa') { poa = null; updatePOAPill(); toast('POA removed'); }
   else { shots.splice(selectedTarget.idx, 1); updateShotPill(); toast('Shot removed'); }
   selectedTarget = null; dragTarget = null; showDelSel(false);
-  renderBoth(); updateStats(); updateStepBar(); updateBanner();
+  markDirty(); renderBoth(); updateStats(); updateStepBar(); updateBanner();
 }
 
 /* ════════════════════════════════════════
    SESSION & TARGET MANAGEMENT
 ════════════════════════════════════════ */
-
-/* Save current canvas state as a target within the active session */
 function saveCurrentTarget() {
   if (activeSessionIdx < 0) { toast('Create or open a session first'); return; }
-  if (!currentImg) { toast('Load a target image first'); return; }
-  if (!poa) { toast('Set POA first'); return; }
-  if (shots.length === 0) { toast('Add at least one shot'); return; }
+  if (!currentImg)          { toast('Load a target image first'); return; }
+  if (!poa)                 { toast('Set POA first'); return; }
+  if (shots.length === 0)   { toast('Add at least one shot'); return; }
 
   var sess = sessions[activeSessionIdx];
-  var label = getTargetLabel() || ('Target ' + (sess.targets.length + 1));
-  var imgSrc = window._pendingImgSrc || currentImg.src;
 
+  /* FIX: read label from input — that is always correct and up to date */
+  var label = getTargetLabel();
+  if (!label) {
+    /* fallback: use window._currentTargetLabel, then numbered fallback */
+    label = window._currentTargetLabel || ('Target ' + (sess.targets.length + 1));
+  }
+
+  var imgSrc = window._pendingImgSrc || currentImg.src;
   var tgt = newTarget(label, imgSrc, imgNaturalW, imgNaturalH);
   tgt.pxPerInch = pxPerInch;
   tgt.poa = { nx: poa.nx, ny: poa.ny };
   tgt.shots = shots.map(function(s) { return { nx: s.nx, ny: s.ny }; });
+  tgt.calibrated = !!pxPerInch;
 
   if (activeTargetIdx >= 0 && activeTargetIdx < sess.targets.length) {
-    /* Updating existing target */
     tgt.id = sess.targets[activeTargetIdx].id;
     sess.targets[activeTargetIdx] = tgt;
     toast('Target "' + label + '" updated');
   } else {
-    /* New target */
     sess.targets.push(tgt);
     activeTargetIdx = sess.targets.length - 1;
-    toast('Target "' + label + '" saved to session');
+    toast('Target "' + label + '" saved');
   }
 
+  /* Keep label input and internal label in sync */
+  window._currentTargetLabel = label;
+  updateTargetLabelInput(label);
+
   sess.updatedAt = new Date().toISOString();
-  dbSave(); renderSidebars(); updateStepBar(); updateBanner();
+  dbSave(); markClean(); renderSidebars(); updateBanner();
 }
 
-/* Load a specific target from a session onto the canvas */
 function loadTarget(sessIdx, tgtIdx) {
   var sess = sessions[sessIdx];
   if (!sess || !sess.targets[tgtIdx]) return;
@@ -510,23 +601,25 @@ function loadTarget(sessIdx, tgtIdx) {
     pxPerInch = tgt.pxPerInch || null;
     calMode = false; calPoints = []; selectedTarget = null; dragTarget = null;
     window._pendingImgSrc = tgt.imgSrc;
+    window._currentTargetLabel = tgt.label; /* FIX: always set from saved label */
     activeSessionIdx = sessIdx; activeTargetIdx = tgtIdx;
     hideCalBar(); updatePOAPill(); updateShotPill(); updateCalPill(); showDelSel(false);
     ['dPlaceholder','mPlaceholder'].forEach(function(id) { var e = document.getElementById(id); if (e) e.style.display = 'none'; });
     dCv.style.display = 'block'; mCv.style.display = 'block';
     sizeCanvas(dCv, document.getElementById('dCanvasWrap'));
     sizeCanvas(mCv, document.getElementById('mCanvasWrap'));
+    /* FIX: label input always reflects the active target's saved label */
     updateTargetLabelInput(tgt.label);
+    markClean(); /* loaded from saved state — clean */
     renderBoth(); updateStats(); updateStepBar(); updateBanner(); setMode('shot');
     renderSidebars(); closeMobileDrawer();
   };
   img.src = tgt.imgSrc;
 }
 
-/* Create a new session */
 function createNewSession() {
   var name = prompt('Session name (e.g. H4350 41.5gr):', 'New session');
-  if (name === null) return; /* cancelled */
+  if (name === null) return;
   var dist = prompt('Distance (yards):', '100');
   if (dist === null) return;
   var notes = prompt('Notes / load details (optional):', '');
@@ -535,38 +628,30 @@ function createNewSession() {
   sessions.push(sess);
   activeSessionIdx = sessions.length - 1;
   activeTargetIdx = -1;
-  /* Clear canvas */
   clearCanvas();
   dbSave(); renderSidebars(); updateBanner(); updateStepBar();
   toast('Session "' + sess.name + '" created — load a target image to begin');
 }
 
-/* Open an existing session (sets active, doesn't load canvas) */
 function openSession(i) {
-  activeSessionIdx = i;
-  activeTargetIdx = -1;
+  activeSessionIdx = i; activeTargetIdx = -1;
   clearCanvas();
   renderSidebars(); updateBanner(); updateStepBar(); closeMobileDrawer();
   var sess = sessions[i];
-  toast('Session "' + sess.name + '" opened — ' + sess.targets.length + ' target' + (sess.targets.length !== 1 ? 's' : ''));
+  toast('Session "' + sess.name + '" — ' + sess.targets.length + ' target' + (sess.targets.length !== 1 ? 's' : ''));
 }
 
-/* Edit session metadata */
 function editSession(i) {
   var sess = sessions[i];
-  var name = prompt('Session name:', sess.name);
-  if (name === null) return;
-  var dist = prompt('Distance (yards):', sess.dist);
-  if (dist === null) return;
-  var notes = prompt('Notes / load details:', sess.notes || '');
-  if (notes === null) return;
+  var name = prompt('Session name:', sess.name); if (name === null) return;
+  var dist = prompt('Distance (yards):', sess.dist); if (dist === null) return;
+  var notes = prompt('Notes / load details:', sess.notes || ''); if (notes === null) return;
   sess.name = name.trim() || sess.name;
   sess.dist = parseFloat(dist) || sess.dist;
   sess.notes = notes.trim();
   dbSave(); renderSidebars(); toast('Session updated');
 }
 
-/* Delete a session */
 function deleteSession(i) {
   sessions.splice(i, 1);
   if (activeSessionIdx === i) { activeSessionIdx = -1; activeTargetIdx = -1; clearCanvas(); }
@@ -574,7 +659,6 @@ function deleteSession(i) {
   dbSave(); renderSidebars(); toast('Session deleted');
 }
 
-/* Delete a target from a session */
 function deleteTarget(sessIdx, tgtIdx) {
   var sess = sessions[sessIdx];
   sess.targets.splice(tgtIdx, 1);
@@ -586,19 +670,18 @@ function deleteTarget(sessIdx, tgtIdx) {
   dbSave(); renderSidebars(); toast('Target deleted');
 }
 
-/* Clear canvas state (new target blank slate) */
 function clearCanvas() {
   currentImg = null; poa = null; shots = []; pxPerInch = null; calMode = false; calPoints = [];
-  selectedTarget = null; dragTarget = null; window._pendingImgSrc = null;
+  selectedTarget = null; dragTarget = null;
+  window._pendingImgSrc = null; window._currentTargetLabel = null;
   hideCalBar(); updatePOAPill(); updateShotPill(); updateCalPill(); showDelSel(false);
   dCv.style.display = 'none'; mCv.style.display = 'none';
   ['dPlaceholder','mPlaceholder'].forEach(function(id) { var e = document.getElementById(id); if (e) e.style.display = ''; });
-  updateStats(); updateTargetLabelInput('');
+  updateStats(); updateTargetLabelInput(''); markNone();
 }
 
 /* ── Composite view ── */
 function renderComposite() {
-  /* Use active session's targets, or all sessions if none active */
   var targets = [];
   if (activeSessionIdx >= 0) {
     targets = sessions[activeSessionIdx].targets;
@@ -646,7 +729,6 @@ function renderComposite() {
     compCx.fillStyle = '#fff'; compCx.font = 'bold 9px sans-serif'; compCx.textAlign = 'center'; compCx.textBaseline = 'middle';
     compCx.fillText(counters[o.ti], px, py); compCx.restore();
   });
-
   var cX = allOff.reduce(function(a,o){return a+o.x;},0)/allOff.length;
   var cY = allOff.reduce(function(a,o){return a+o.y;},0)/allOff.length;
   var fromC = allOff.map(function(o){return Math.sqrt(Math.pow(o.x-cX,2)+Math.pow(o.y-cY,2));});
@@ -663,7 +745,6 @@ function renderComposite() {
   compCx.fillStyle='#666'; compCx.font='10px sans-serif'; compCx.textAlign='center';
   compCx.fillText('+'+maxAbs.toFixed(2)+'"',SIZE-26,SIZE/2-5);
   compCx.fillText('\u2212'+maxAbs.toFixed(2)+'"',26,SIZE/2-5);
-
   var lh = targets.length * 14 + 8;
   compCx.fillStyle='rgba(249,249,247,0.92)'; compCx.fillRect(6,SIZE-lh-4,150,lh+4);
   targets.forEach(function(t,i){
@@ -673,14 +754,13 @@ function renderComposite() {
     var lbl=t.label; if(lbl.length>18)lbl=lbl.slice(0,17)+'…';
     compCx.fillText(lbl+' ('+t.shots.length+')',22,y+2);
   });
-
   function sv(id,v){var e=document.getElementById(id);if(e&&e.childNodes[0])e.childNodes[0].nodeValue=v;}
   sv('dcN',allOff.length); sv('dcH',fmt(cX)); sv('dcV',fmt(cY)); sv('dcMR',fmt(mr)); sv('dcR95',fmt(r95));
   var es=0; for(var i=0;i<allOff.length;i++) for(var j=i+1;j<allOff.length;j++){var d=Math.sqrt(Math.pow(allOff[i].x-allOff[j].x,2)+Math.pow(allOff[i].y-allOff[j].y,2));if(d>es)es=d;}
   sv('dcES',fmt(es));
 }
 
-/* ── Export/import ── */
+/* ── Export / Import ── */
 function saveBackupFile() {
   if (sessions.length === 0) { toast('No sessions to save'); return; }
   var blob = new Blob([JSON.stringify({ version: 3, savedAt: new Date().toISOString(), sessions: sessions }, null, 2)], { type: 'application/json' });
@@ -712,7 +792,7 @@ function exportSpreadsheet() {
       var cX = offs.reduce(function(a,o){return a+o.x;},0)/offs.length;
       var cY = offs.reduce(function(a,o){return a+o.y;},0)/offs.length;
       offs.forEach(function(o, i) {
-        var hc=o.x-cX,vc=o.y-cY,rc=Math.sqrt(hc*hc+vc*vc);
+        var hc=o.x-cX, vc=o.y-cY, rc=Math.sqrt(hc*hc+vc*vc);
         rows.push(['"'+sess.name+'"',si+1,sess.dist,tgt.calibrated?'yes':'estimated','"'+tgt.label+'"',ti+1,i+1,o.x.toFixed(4),o.y.toFixed(4),hc.toFixed(4),vc.toFixed(4),rc.toFixed(4),'"'+(sess.notes||'')+'"'].join(','));
       });
     });
@@ -724,7 +804,7 @@ function exportSpreadsheet() {
   var a = document.createElement('a'); a.href = url; a.download = 'shot-tracker-data-' + new Date().toISOString().slice(0,10) + '.csv'; a.click(); URL.revokeObjectURL(url);
 }
 function exportCompositeImage() {
-  if (compCv.style.display === 'none' || !compCv.width) { renderComposite(); }
+  if (compCv.style.display === 'none' || !compCv.width) renderComposite();
   if (compCv.style.display === 'none') { toast('No composite data to export'); return; }
   var url = compCv.toDataURL('image/png');
   var a = document.createElement('a'); a.href = url; a.download = 'shot-tracker-composite-' + new Date().toISOString().slice(0,10) + '.png'; a.click();
@@ -734,73 +814,84 @@ function exportCompositeImage() {
 /* ── Sidebar HTML ── */
 function buildSidebarHTML() {
   var activeSess = activeSessionIdx >= 0 ? sessions[activeSessionIdx] : null;
+  var curLabel = (activeSess && activeTargetIdx >= 0 && activeSess.targets[activeTargetIdx])
+    ? activeSess.targets[activeTargetIdx].label
+    : (window._currentTargetLabel || '');
 
-  /* ── Sessions list ── */
-  var sessHTML = '';
-  if (sessions.length === 0) {
-    sessHTML = '<div style="font-size:12px;color:var(--text-tertiary);padding:4px 0">No sessions yet — create one to begin</div>';
-  } else {
-    sessHTML = sessions.map(function(s, si) {
-      var isOpen = si === activeSessionIdx;
-      /* Targets list for open session */
-      var tgtHTML = '';
-      if (isOpen && s.targets.length > 0) {
-        tgtHTML = '<div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">' +
-          s.targets.map(function(t, ti) {
-            var isCur = ti === activeTargetIdx;
-            var st = computeStats(t.shots, t.poa, t.pxPerInch, t.imgW);
-            var badge = st ? (st.n + ' shots · R95 ' + fmt(st.r95, 2) + '"') : (t.shots.length + ' shots');
-            return '<div style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:var(--radius);background:' + (isCur ? 'var(--bg-info)' : 'var(--bg-tertiary)') + ';border:0.5px solid ' + (isCur ? 'var(--border-info)' : 'transparent') + '">' +
-              '<div style="flex:1;cursor:pointer" onclick="loadTarget(' + si + ',' + ti + ')">' +
-                '<div style="font-size:12px;font-weight:' + (isCur?'500':'400') + ';color:' + (isCur?'var(--text-info)':'var(--text-primary)') + '">' + t.label + '</div>' +
-                '<div style="font-size:11px;color:var(--text-tertiary)">' + badge + '</div>' +
-              '</div>' +
-              '<button class="s-btn s-btn-danger" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();askDelTarget(' + si + ',' + ti + ')">✕</button>' +
-            '</div>';
-          }).join('') +
-        '</div>';
-      }
-      return '<div class="session-item' + (isOpen ? ' active' : '') + '" id="sitem' + si + '">' +
-        '<div style="display:flex;align-items:center;gap:4px">' +
-          '<div style="flex:1;cursor:pointer" onclick="openSession(' + si + ')">' +
-            '<div class="session-name">' + s.name + '</div>' +
-            '<div class="session-meta">' + s.dist + 'yd · ' + s.targets.length + ' target' + (s.targets.length !== 1 ? 's' : '') + (s.notes ? ' · ' + s.notes : '') + '</div>' +
+  /* Save button HTML — class driven by saveState */
+  var saveBtnHTML = '<button class="btn ' + saveBtnClass() + '" id="dSaveTargetBtn" ' +
+    'style="margin-bottom:4px' + (saveState === 'dirty' ? ';animation:savePulse 2s ease-in-out infinite' : '') + '" ' +
+    'onclick="saveCurrentTarget();closeMobileDrawer()">' +
+    '<i class="ti ti-device-floppy"></i> ' + saveLabel() + '</button>';
+
+  var sessHTML = sessions.length === 0
+    ? '<div style="font-size:12px;color:var(--text-tertiary);padding:4px 0">No sessions yet — create one to begin</div>'
+    : sessions.map(function(s, si) {
+        var isOpen = si === activeSessionIdx;
+        var tgtHTML = '';
+        if (isOpen && s.targets.length > 0) {
+          tgtHTML = '<div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">' +
+            s.targets.map(function(t, ti) {
+              var isCur = ti === activeTargetIdx;
+              var st = computeStats(t.shots, t.poa, t.pxPerInch, t.imgW);
+              var badge = st ? (st.n + ' shots · R95 ' + fmt(st.r95, 2) + '"') : (t.shots.length + ' shots');
+              return '<div style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:var(--radius);' +
+                'background:' + (isCur ? 'var(--bg-info)' : 'var(--bg-tertiary)') + ';' +
+                'border:0.5px solid ' + (isCur ? 'var(--border-info)' : 'transparent') + '">' +
+                '<div style="flex:1;cursor:pointer" onclick="loadTarget(' + si + ',' + ti + ')">' +
+                  '<div style="font-size:12px;font-weight:' + (isCur?'500':'400') + ';color:' + (isCur?'var(--text-info)':'var(--text-primary)') + '">' + t.label + '</div>' +
+                  '<div style="font-size:11px;color:var(--text-tertiary)">' + badge + '</div>' +
+                '</div>' +
+                '<button class="s-btn s-btn-danger" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();askDelTarget(' + si + ',' + ti + ')">✕</button>' +
+              '</div>';
+            }).join('') + '</div>';
+        }
+        return '<div class="session-item' + (isOpen ? ' active' : '') + '" id="sitem' + si + '">' +
+          '<div style="display:flex;align-items:center;gap:4px">' +
+            '<div style="flex:1;cursor:pointer" onclick="openSession(' + si + ')">' +
+              '<div class="session-name">' + s.name + '</div>' +
+              '<div class="session-meta">' + s.dist + 'yd · ' + s.targets.length + ' target' + (s.targets.length !== 1 ? 's' : '') + (s.notes ? ' · ' + s.notes : '') + '</div>' +
+            '</div>' +
+            '<button class="s-btn" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();editSession(' + si + ')"><i class="ti ti-pencil" style="font-size:11px"></i></button>' +
+            '<button class="s-btn s-btn-danger" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();askDelSession(' + si + ')">✕</button>' +
           '</div>' +
-          '<button class="s-btn" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();editSession(' + si + ')"><i class="ti ti-pencil" style="font-size:11px"></i></button>' +
-          '<button class="s-btn s-btn-danger" style="padding:2px 6px;font-size:11px" onclick="event.stopPropagation();askDelSession(' + si + ')">✕</button>' +
-        '</div>' +
-        tgtHTML +
-        '<div class="s-del-confirm" id="sdel' + si + '">' +
-          '<span>Delete session + all targets?</span>' +
-          '<button class="s-btn s-confirm" onclick="deleteSession(' + si + ')">Yes</button>' +
-          '<button class="s-btn" onclick="cancelDel(' + si + ')">No</button>' +
-        '</div>' +
-        '<div class="s-del-confirm" id="stgtdel' + si + '">' +
-          '<span>Delete this target?</span>' +
-          '<button class="s-btn s-confirm" id="stgtdelyes' + si + '">Yes</button>' +
-          '<button class="s-btn" onclick="cancelTgtDel(' + si + ')">No</button>' +
-        '</div>' +
-      '</div>';
-    }).join('');
-  }
+          tgtHTML +
+          '<div class="s-del-confirm" id="sdel' + si + '">' +
+            '<span>Delete session + all targets?</span>' +
+            '<button class="s-btn s-confirm" onclick="deleteSession(' + si + ')">Yes</button>' +
+            '<button class="s-btn" onclick="cancelDel(' + si + ')">No</button>' +
+          '</div>' +
+          '<div class="s-del-confirm" id="stgtdel' + si + '">' +
+            '<span>Delete this target?</span>' +
+            '<button class="s-btn s-confirm" id="stgtdelyes' + si + '">Yes</button>' +
+            '<button class="s-btn" onclick="cancelTgtDel(' + si + ')">No</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
 
-  /* ── Active session target label field ── */
   var targetFieldHTML = activeSess
-    ? '<div class="field" style="margin-bottom:6px"><label>Target label</label><input id="dTargetLabel" type="text" placeholder="e.g. Group 1, Cold bore" value="' + (window._pendingTargetLabel || '') + '"/></div>'
+    ? '<div class="field" style="margin-bottom:6px"><label>Target label</label>' +
+      '<input id="dTargetLabel" type="text" placeholder="e.g. Group 1, Cold bore" value="' + curLabel + '" ' +
+      'oninput="window._currentTargetLabel=this.value;markDirty()"/></div>'
     : '';
 
   return '<div class="sec-label">Actions</div>' +
-    '<button class="btn btn-primary" onclick="saveCurrentTarget();closeMobileDrawer()" style="margin-bottom:4px"><i class="ti ti-device-floppy"></i> Save target</button>' +
-    '<button class="btn btn-sm" onclick="createNewSession();closeMobileDrawer()" style="margin-bottom:8px"><i class="ti ti-plus"></i> New session</button>' +
+    saveBtnHTML +
+    '<button class="btn btn-sm" onclick="createNewSession();closeMobileDrawer()" style="margin-bottom:8px">' +
+      '<i class="ti ti-plus"></i> New session</button>' +
 
-    (activeSess ? '<div class="sec-label">Current session</div>' +
-      '<div style="padding:8px 10px;border-radius:var(--radius);border:0.5px solid var(--border-info);background:var(--bg-info);margin-bottom:8px">' +
-        '<div style="font-size:13px;font-weight:500;color:var(--text-info)">' + activeSess.name + '</div>' +
-        '<div style="font-size:11px;color:var(--text-info);opacity:0.8">' + activeSess.dist + 'yd' + (activeSess.notes ? ' · ' + activeSess.notes : '') + '</div>' +
-      '</div>' +
-      targetFieldHTML +
-      '<label class="btn upload-btn" style="margin-bottom:8px"><i class="ti ti-photo-up"></i> Load target image<input type="file" accept="image/*" onchange="loadImageFile(this.files[0])"/></label>'
-    : '<div style="font-size:12px;color:var(--text-secondary);padding:4px 0;margin-bottom:8px">Create or open a session to load target images.</div>') +
+    (activeSess
+      ? '<div class="sec-label">Current session</div>' +
+        '<div style="padding:8px 10px;border-radius:var(--radius);border:0.5px solid var(--border-info);background:var(--bg-info);margin-bottom:8px">' +
+          '<div style="font-size:13px;font-weight:500;color:var(--text-info)">' + activeSess.name + '</div>' +
+          '<div style="font-size:11px;color:var(--text-info);opacity:0.8">' + activeSess.dist + 'yd' + (activeSess.notes ? ' · ' + activeSess.notes : '') + '</div>' +
+        '</div>' +
+        targetFieldHTML +
+        '<label class="btn upload-btn" style="margin-bottom:8px">' +
+          '<i class="ti ti-photo-up"></i> Load target image' +
+          '<input type="file" accept="image/*" onchange="loadImageFile(this.files[0])"/>' +
+        '</label>'
+      : '<div style="font-size:12px;color:var(--text-secondary);padding:4px 0;margin-bottom:8px">Create or open a session to load target images.</div>') +
 
     '<div class="sec-label">Save &amp; Export</div>' +
     '<div class="export-grid" style="margin-bottom:8px">' +
@@ -815,6 +906,13 @@ function buildSidebarHTML() {
     (sessions.length > 0 ? '<button class="btn btn-danger btn-sm" onclick="askClearAll()" style="margin-top:8px"><i class="ti ti-trash"></i> Clear all sessions</button>' : '');
 }
 
+function saveLabel() {
+  if (saveState === 'dirty')  return 'Save target ●';
+  if (saveState === 'saving') return 'Saved ✓';
+  if (saveState === 'clean')  return 'Saved ✓';
+  return 'Save target';
+}
+
 function renderSidebars() {
   var h = buildSidebarHTML();
   document.getElementById('dSidebarContent').innerHTML = h;
@@ -823,14 +921,12 @@ function renderSidebars() {
 
 function askDelSession(i) { var e = document.getElementById('sdel' + i); if (e) e.style.display = 'flex'; }
 function cancelDel(i) { var e = document.getElementById('sdel' + i); if (e) e.style.display = 'none'; }
-var _pendingTgtDel = null;
 function askDelTarget(si, ti) {
-  _pendingTgtDel = { si: si, ti: ti };
   var e = document.getElementById('stgtdel' + si); if (e) e.style.display = 'flex';
   var yb = document.getElementById('stgtdelyes' + si);
   if (yb) yb.onclick = function() { deleteTarget(si, ti); };
 }
-function cancelTgtDel(si) { var e = document.getElementById('stgtdel' + si); if (e) e.style.display = 'none'; _pendingTgtDel = null; }
+function cancelTgtDel(si) { var e = document.getElementById('stgtdel' + si); if (e) e.style.display = 'none'; }
 function askClearAll() {
   var p = window._cap;
   if (p) { clearTimeout(p); window._cap = null; sessions = []; activeSessionIdx = -1; activeTargetIdx = -1; clearCanvas(); dbSave(); renderSidebars(); toast('All sessions cleared'); return; }
@@ -865,15 +961,10 @@ function switchTab(t) {
   if (t === 'composite') renderComposite();
 }
 
-/* ── PWA install prompt ── */
+/* ── PWA ── */
 var deferredInstall = null;
-window.addEventListener('beforeinstallprompt', function(e) {
-  e.preventDefault(); deferredInstall = e;
-  document.getElementById('installBanner').classList.add('show');
-});
-window.addEventListener('appinstalled', function() {
-  document.getElementById('installBanner').classList.remove('show'); deferredInstall = null; toast('Shot Tracker installed!');
-});
+window.addEventListener('beforeinstallprompt', function(e) { e.preventDefault(); deferredInstall = e; document.getElementById('installBanner').classList.add('show'); });
+window.addEventListener('appinstalled', function() { document.getElementById('installBanner').classList.remove('show'); deferredInstall = null; toast('Shot Tracker installed!'); });
 function triggerInstall() { if (!deferredInstall) return; deferredInstall.prompt(); deferredInstall.userChoice.then(function() { deferredInstall = null; }); }
 
 /* ── Wire events ── */
@@ -899,11 +990,11 @@ wire('mMenuBtn',  'click', openMobileDrawer);
 wire('mDrawerBackdrop', 'click', closeMobileDrawer);
 wire('dSettingsBtn', 'click', openSettings);
 wire('mSettingsBtn', 'click', function() { closeMobileDrawer(); openSettings(); });
-wire('settingsClose',   'click', closeSettings);
-wire('settingsOverlay', 'click', function(e) { if (e.target === this) closeSettings(); });
+wire('settingsClose',    'click', closeSettings);
+wire('settingsOverlay',  'click', function(e) { if (e.target === this) closeSettings(); });
 wire('storageModeLocal', 'click', function() { setStorageMode('local'); });
 wire('storageModFiles',  'click', function() { setStorageMode('files'); });
-wire('calDefaultInput', 'change', function() { var v = parseFloat(this.value) || 1; settings.calDefault = v; saveSettings(); toast('Default cal distance set to ' + v + '"'); });
+wire('calDefaultInput',  'change', function() { var v = parseFloat(this.value) || 1; settings.calDefault = v; saveSettings(); toast('Default cal distance set to ' + v + '"'); });
 wire('mStatsToggle', 'click', function() { this.classList.toggle('open'); document.getElementById('mStatsPanel').classList.toggle('open'); });
 wire('installBanner',  'click', triggerInstall);
 wire('installDismiss', 'click', function(e) { e.stopPropagation(); document.getElementById('installBanner').classList.remove('show'); });
@@ -916,7 +1007,6 @@ window.addEventListener('resize', function() {
   }
 });
 
-/* ── Service worker ── */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() { navigator.serviceWorker.register('/sw.js').catch(function() {}); });
 }
@@ -927,18 +1017,19 @@ openDB().then(function() {
 }).then(function(saved) {
   if (saved && saved.length > 0) {
     sessions = saved.map(function(s) { var c = Object.assign({}, s); delete c.id; return c; });
-    /* Migrate v1 sessions (flat shots/poa structure) to v2 (targets array) */
+    /* Migrate v1 flat sessions to v2 targets structure */
     sessions = sessions.map(function(s) {
-      if (s.targets) return s; /* already v2 */
-      /* Wrap old session into a single target */
-      var tgt = newTarget(s.name || 'Target 1', s.imgSrc, s.imgW, s.imgH);
-      tgt.pxPerInch = s.pxPerInch || null;
-      tgt.poa = s.poa || null;
-      tgt.shots = s.shots || [];
-      tgt.calibrated = s.calibrated || false;
-      return newSession(s.name, s.dist, s.notes || '');
-      // Note: old sessions without targets array are converted to empty sessions
-      // because we can't reliably reconstruct the target structure from flat data
+      if (s.targets) return s;
+      var sess = newSession(s.name, s.dist, s.notes || '');
+      if (s.poa && s.shots && s.shots.length > 0) {
+        var tgt = newTarget(s.name || 'Target 1', s.imgSrc, s.imgW, s.imgH);
+        tgt.pxPerInch = s.pxPerInch || null;
+        tgt.poa = s.poa;
+        tgt.shots = s.shots;
+        tgt.calibrated = s.calibrated || false;
+        sess.targets.push(tgt);
+      }
+      return sess;
     });
     toast('Loaded ' + sessions.length + ' session' + (sessions.length !== 1 ? 's' : ''));
   }

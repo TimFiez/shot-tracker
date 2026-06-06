@@ -336,3 +336,49 @@ canvas { display: block; max-width: 100%; max-height: 100%; touch-action: none; 
 
 /* ── Utility ── */
 .flex-gap4 { display: flex; gap: 4px; }
+
+/* ── Save button states ── */
+@keyframes savePulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.65; }
+}
+
+/* No target loaded — neutral, low emphasis */
+.btn-save-none {
+  border-color: var(--border-s);
+  background: var(--bg-secondary);
+  color: var(--text-tertiary);
+}
+
+/* Unsaved changes — amber, demands attention */
+.btn-save-dirty {
+  border-color: var(--border-warning);
+  background: var(--bg-warning);
+  color: var(--text-warning);
+  font-weight: 500;
+}
+
+/* Just saved — solid green flash */
+.btn-save-saving {
+  border-color: transparent;
+  background: var(--text-success);
+  color: #fff;
+  font-weight: 500;
+}
+
+/* Saved, no changes — quiet green outline */
+.btn-save-clean {
+  border-color: var(--border-success);
+  background: transparent;
+  color: var(--text-success);
+}
+
+/* Step bar dirty state — amber, same as unsaved */
+.step.dirty {
+  border-color: var(--border-warning);
+  color: var(--text-warning);
+  background: var(--bg-warning);
+  font-weight: 500;
+  animation: savePulse 2s ease-in-out infinite;
+  cursor: pointer;
+}
